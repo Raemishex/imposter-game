@@ -10,8 +10,8 @@ export { playStoreSound };
 
 // ─── Socket Connection ────────────────────────────────────────────────────────
 const isProduction = import.meta.env.PROD;
-const productionUrl = import.meta.env.VITE_SERVER_URL;
-const socketUrl = isProduction && productionUrl
+const productionUrl = 'https://imposter-server-h8u6.onrender.com';
+const socketUrl = isProduction
     ? productionUrl
     : `${window.location.protocol}//${window.location.hostname}:3001`;
 
