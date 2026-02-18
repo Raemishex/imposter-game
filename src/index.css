@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light Mode (Default) */
+    --bg-primary: #f3f4f6; /* Gray-100 */
+    --bg-card: #ffffff;
+    --text-primary: #1f2937; /* Gray-800 */
+    --text-secondary: #6b7280; /* Gray-500 */
+    --accent-color: #a3e635; /* Lime-400 (Start Button) */
+    --accent-hover: #84cc16; /* Lime-500 */
+    --border-color: #e5e7eb; /* Gray-200 */
+  }
+
+  .dark {
+    /* Dark Mode */
+    --bg-primary: #0f172a; /* Slate-900 */
+    --bg-card: #1e293b; /* Slate-800 */
+    --text-primary: #f1f5f9; /* Slate-100 */
+    --text-secondary: #94a3b8; /* Slate-400 */
+    --accent-color: #84cc16; /* Lime-500 */
+    --accent-hover: #65a30d; /* Lime-600 */
+    --border-color: #334155; /* Slate-700 */
+  }
+
+  .theme-neon {
+    /* Cyberpunk Neon */
+    --bg-primary: #050505;
+    --bg-card: #0a0a0a;
+    --text-primary: #22c55e; /* Neon Green */
+    --text-secondary: #15803d;
+    --accent-color: #d946ef; /* Fuchsia-500 */
+    --accent-hover: #c026d3;
+    --border-color: #22c55e;
+  }
+
+  .theme-orange {
+    /* Sunset Orange */
+    --bg-primary: #fff7ed; /* Orange-50 */
+    --bg-card: #ffedd5; /* Orange-100 */
+    --text-primary: #9a3412; /* Orange-900 */
+    --text-secondary: #c2410c; /* Orange-700 */
+    --accent-color: #f97316; /* Orange-500 */
+    --accent-hover: #ea580c;
+    --border-color: #fdba74;
+  }
+
+  body {
+    @apply bg-[var(--bg-primary)] text-[var(--text-primary)] overflow-x-hidden select-none transition-colors duration-300;
+  }
+  
+  input, textarea {
+    @apply select-text;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply w-full py-4 rounded-xl font-black text-lg uppercase tracking-wide
+    bg-[var(--accent-color)] text-slate-900 shadow-lg
+    hover:bg-[var(--accent-hover)] hover:scale-[1.02] active:scale-95 
+    transition-all duration-200 flex items-center justify-center gap-2;
+  }
+
+  .card-base {
+    @apply bg-[var(--bg-card)] rounded-2xl p-4 shadow-sm border border-[var(--border-color)] transition-colors duration-300;
+  }
+
+  .icon-btn {
+    @apply p-2 rounded-full text-[var(--text-secondary)] hover:bg-[var(--border-color)] transition-colors;
+  }
+}
+
+/* 3D Card Flip */
+.perspective-1000 {
+  perspective: 1000px;
+}
+.transform-style-3d {
+  transform-style: preserve-3d;
+}
+.backface-hidden {
+  backface-visibility: hidden;
+}
+.rotate-y-180 {
+  transform: rotateY(180deg);
+}
+
+/* ─── Mobile Touch UX Fixes ─────────────────────────────────────────────────── */
+
+/* Prevent iOS context menu (copy/paste popup) on long press */
+* {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Allow text selection in inputs/textareas */
+input, textarea, [contenteditable] {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* Prevent double-tap zoom on buttons and interactive elements */
+button, a, [role="button"] {
+  touch-action: manipulation;
+}
+
+/* Card flip - prevent any touch selection */
+.perspective-1000,
+.transform-style-3d,
+.backface-hidden {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
