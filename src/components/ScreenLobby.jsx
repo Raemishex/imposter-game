@@ -43,7 +43,7 @@ const ScreenLobby = () => {
     const [chaosMode, setChaosMode] = useState(false);
     const [showSocialModal, setShowSocialModal] = useState(false);
     const [historyModal, setHistoryModal] = useState(false);
-    // Gizli admin modal
+    // secret admin modal
     const [devModeClicks, setDevModeClicks] = useState(0);
     const devClickTimer = useRef(null);
     const [showAdminModal, setShowAdminModal] = useState(false);

@@ -43,7 +43,6 @@ Oyun zamanı çoxlu səs yığıb oyundan çıxarılan oyunçular (eliminasiya o
   - 👥 **İkili Bəla:** Normal şanzla əlavə bir İmposter cəlb olur.
   - ⚡ **Sürət Raund:** Hər oyunçuya ayrılan ipucu və səsvermə vaxtı yarıya endirilir.
 - **Troll Mod:** Xüsusi parametrlə hər kəsi İmposter etmək və qarışıqlıq yaratmaq :)
-- **Admin Cheats:** Host/Admin üçün xüsusi "görmə" qabiliyyətləri (digər adminləri görmək və hətta qaranlıq halda əsl sözü tutmaq mümkündür).
 
 ---
 
