@@ -4,7 +4,7 @@ import io from 'socket.io-client';
 import { CATEGORIES } from '../data';
 import { UI_TEXTS } from '../translations';
 
-// ─── Sound helper (works outside React hooks) ─────────────────────────────────
+// ─── Sound helper ─────────────────────────────────────────────────────────────
 import { playStoreSound } from '../hooks/useSoundManager';
 export { playStoreSound };
 
@@ -64,13 +64,25 @@ const useGameStore = create(
             voteUpdate: null,
             voteResult: null,
 
-            // Advanced features
-            role: 'crew',        // 'crew' | 'imposter' | 'jester'
-            chaosEvent: null,    // 'blind_round' | 'double_trouble' | 'speed_run' | null
-            toastMessage: null,  // host migration / player left notifications
+            // Rol & Xüsusi modlar
+            role: 'crew',
+            chaosEvent: null,
+            toastMessage: null,
 
             // Ready system
             readyUpdate: { readyCount: 0, totalCount: 0, allReady: false },
+
+            // ── Gizli Admin Modu ──────────────────────────────────────────────
+            isSecretAdmin: false,
+
+            // ── Qlobal Otaqlar ────────────────────────────────────────────────
+            globalRooms: [],
+
+            // ── Tarixçə qoruması (bir dəfə yazılmasını təmin edir) ────────────
+            historyRecorded: false,
+
+            // ── Next Round state ──────────────────────────────────────────────
+            nextRoundInfo: null,
 
             // ── Actions ───────────────────────────────────────────────────────
 
@@ -92,9 +104,24 @@ const useGameStore = create(
             setError: (msg) => set({ error: msg }),
             setGameMode: (mode) => set({ mode }),
 
+            // ── Admin Modu ───────────────────────────────────────────────────
+            activateSecretAdmin: (password) => {
+                const ADMIN_PASSWORD = 'ramazan2003';
+                if (password === ADMIN_PASSWORD) {
+                    set({ isSecretAdmin: true });
+                    // Server-ə de bildir ki, bu admin-dir (Admin Radar + Spy Word)
+                    const { roomCode } = get();
+                    socket.emit('check_admin_password', { password, roomCode });
+                    return true;
+                }
+                return false;
+            },
+
+            deactivateSecretAdmin: () => set({ isSecretAdmin: false }),
+
             // ── Room Actions ──────────────────────────────────────────────────
 
-            createRoom: (playerName) => {
+            createRoom: (playerName, isPrivate = false, roomName = '', region = 'Global') => {
                 if (get().mode === 'local') {
                     set({
                         gameState: 'lobby',
@@ -105,7 +132,7 @@ const useGameStore = create(
                     });
                     return;
                 }
-                socket.emit('create_room', { playerName });
+                socket.emit('create_room', { playerName, isPrivate, roomName, region });
             },
 
             joinRoom: (roomCode, playerName) => {
@@ -115,7 +142,6 @@ const useGameStore = create(
             leaveRoom: () => {
                 const { roomCode } = get();
                 if (roomCode) socket.emit('leave_room', { roomCode });
-                // Clear session storage for rejoin
                 localStorage.removeItem('rejoin_roomCode');
                 localStorage.removeItem('rejoin_playerName');
                 set({
@@ -128,16 +154,21 @@ const useGameStore = create(
                     discussionClues: [],
                     voteUpdate: null,
                     voteResult: null,
-                    messages: []
+                    messages: [],
+                    globalRooms: []
                 });
+            },
+
+            fetchGlobalRooms: (region) => {
+                socket.emit('get_global_rooms', region ? { region } : {});
             },
 
             // ── Game Actions ──────────────────────────────────────────────────
 
-            startGame: (categoryIds, words, settings) => {
+            // KRİTİK: wordObjects = [{word, category}] formatında göndərilir
+            startGame: (categoryIds, wordObjects, settings) => {
                 const { roomCode } = get();
-                // Send categoryIds as array (server picks one randomly)
-                socket.emit('start_game', { roomCode, categoryIds, words, settings });
+                socket.emit('start_game', { roomCode, categoryIds, wordObjects, settings });
             },
 
             startDiscussion: () => {
@@ -164,23 +195,68 @@ const useGameStore = create(
                 const { roomCode, mode, players } = get();
 
                 if (mode === 'local') {
-                    // Local mode: immediate result
                     const target = players.find(p => p.id === targetId);
-                    if (!target) return;
-                    const wasImposter = target.isImposter;
-                    const result = {
-                        winner: wasImposter ? 'crew' : 'imposter',
-                        reason: wasImposter ? 'Imposter tapıldı! 🎉' : 'Səhv seçim! Imposter qazandı! 😈',
-                        eliminatedName: target.name,
-                        wasImposter,
+                    
+                    if (target) {
+                        target.isAlive = false;
+                    }
+
+                    const alivePlayers = players.filter(p => p.isAlive);
+                    const aliveImposters = alivePlayers.filter(p => p.isImposter);
+                    const aliveCrew = alivePlayers.filter(p => !p.isImposter && p.role !== 'jester');
+                    
+                    const isJester = target?.role === 'jester';
+                    let over = false;
+                    let winner = null;
+                    let reason = null;
+
+                    if (isJester) {
+                        over = true;
+                        winner = 'jester';
+                        reason = `${target.name} Jester idi! Jester qazandı! 🎠`;
+                    } else if (aliveImposters.length === 0) {
+                        over = true;
+                        winner = 'crew';
+                        reason = target ? `${target.name} imposter idi! Vətəndaşlar qazandı! 🎉` : 'Bütün imposterlər tapıldı! 🎉';
+                    } else if (aliveImposters.length >= aliveCrew.length) {
+                        over = true;
+                        winner = 'imposter';
+                        reason = target && !target.isImposter 
+                            ? `${target.name} vətəndaş idi! İmposterlar qazandı! 😈`
+                            : 'İmposterlar qazandı! 😈';
+                    }
+
+                    const resultPayload = {
+                        eliminatedName: target?.name || 'Heç kim',
+                        wasImposter: target?.isImposter || false,
+                        isJester,
                         word: get().currentWord,
-                        imposters: players.filter(p => p.isImposter).map(p => p.name)
+                        imposters: players.filter(p => p.isImposter).map(p => p.name),
+                        jester: players.find(p => p.role === 'jester')?.name || null,
+                        players
                     };
-                    set({ gameState: 'result', gameResult: result });
+
+                    if (over) {
+                        set({ 
+                            gameState: 'result', 
+                            gameResult: { ...resultPayload, winner, reason }
+                        });
+                    } else {
+                        set({
+                            gameState: 'next_round',
+                            nextRoundInfo: {
+                                ...resultPayload,
+                                alivePlayers,
+                                message: target 
+                                    ? (target.isImposter ? `${target.name} imposter idi! Oyun davam edir...` : `${target.name} vətəndaş idi! Oyun davam edir...`)
+                                    : 'Heç kim atılmadı. Oyun davam edir...'
+                            },
+                            players: [...players]
+                        });
+                    }
                     return;
                 }
 
-                // Online mode: emit to server
                 socket.emit('vote', { roomCode, targetId });
             },
 
@@ -202,7 +278,9 @@ const useGameStore = create(
                         discussionTurn: null,
                         discussionClues: [],
                         voteUpdate: null,
-                        voteResult: null
+                        voteResult: null,
+                        nextRoundInfo: null,
+                        historyRecorded: false
                     });
                 }
             },
@@ -210,14 +288,13 @@ const useGameStore = create(
             playAgain: () => {
                 const { mode, roomCode } = get();
                 if (mode === 'online' && roomCode) {
-                    // Emit reset_game: server clears game data, keeps players, broadcasts game_reset
                     socket.emit('reset_game', { roomCode });
                 } else {
-                    set({ gameState: 'lobby', gameResult: null });
+                    set({ gameState: 'lobby', gameResult: null, historyRecorded: false });
                 }
             },
 
-            // ── Local Mode Actions ────────────────────────────────────────────
+            // ── Local Mode ────────────────────────────────────────────────────
 
             addLocalPlayer: (name) => {
                 const { players } = get();
@@ -229,12 +306,11 @@ const useGameStore = create(
                 return { success: true };
             },
 
-            startLocalGame: (categoryId, words, settings) => {
+            startLocalGame: (categoryId, wordObjects, settings) => {
                 const { players } = get();
-                const lang = get().language;
 
                 const isTrollActive = settings.trollMode && Math.random() < 0.5;
-                const newPlayers = players.map(p => ({ ...p, isImposter: false, votes: 0 }));
+                const newPlayers = players.map(p => ({ ...p, isImposter: false, votes: 0, isAlive: true }));
 
                 if (isTrollActive) {
                     newPlayers.forEach(p => p.isImposter = true);
@@ -249,9 +325,7 @@ const useGameStore = create(
                     newPlayers.forEach((p, i) => p.isImposter = imposterSet.has(i));
                 }
 
-                // Find word category
                 const catArray = Array.isArray(categoryId) ? categoryId : [categoryId];
-                const chosenCat = catArray[Math.floor(Math.random() * catArray.length)];
 
                 const crew = newPlayers.filter(p => !p.isImposter);
                 const imposters = newPlayers.filter(p => p.isImposter);
@@ -260,19 +334,26 @@ const useGameStore = create(
                 else if (imposters.length) startingPlayerId = imposters[Math.floor(Math.random() * imposters.length)].id;
                 else startingPlayerId = newPlayers[0].id;
 
+                // wordObjects formatı: [{word, category}]
+                const validWordObjs = Array.isArray(wordObjects) && wordObjects.length > 0
+                    ? wordObjects
+                    : [];
+                const chosenWordObj = validWordObjs[Math.floor(Math.random() * validWordObjs.length)] || { word: '?', category: '?' };
+
                 set({
                     mode: 'local',
                     gameState: 'local_reveal',
                     players: newPlayers,
                     selectedCategories: catArray,
-                    currentWord: words[Math.floor(Math.random() * words.length)],
-                    currentCategory: chosenCat,
+                    currentWord: chosenWordObj.word,
+                    currentCategory: chosenWordObj.category,
                     startingPlayerId,
                     isTrollActive,
                     timeLimit: settings.timeLimit,
                     imposterHint: settings.imposterHint,
                     imposterSquad: settings.imposterSquad,
                     localRevealIndex: 0,
+                    historyRecorded: false
                 });
             },
 
@@ -289,7 +370,6 @@ const useGameStore = create(
                 socket.on('connect', () => {
                     set({ isConnected: true });
 
-                    // Auto-rejoin if we have stored session
                     const storedRoom = localStorage.getItem('rejoin_roomCode');
                     const storedName = localStorage.getItem('rejoin_playerName');
                     const state = get();
@@ -307,7 +387,6 @@ const useGameStore = create(
 
                 socket.on('room_created', ({ roomCode, players }) => {
                     const myPlayer = players.find(p => p.id === socket.id);
-                    // Save for rejoin
                     localStorage.setItem('rejoin_roomCode', roomCode);
                     localStorage.setItem('rejoin_playerName', myPlayer?.name || '');
                     set({ gameState: 'lobby', roomCode, players, currentPlayer: myPlayer, error: null });
@@ -315,7 +394,6 @@ const useGameStore = create(
 
                 socket.on('joined_room', ({ roomCode, players }) => {
                     const myPlayer = players.find(p => p.id === socket.id);
-                    // Save for rejoin
                     localStorage.setItem('rejoin_roomCode', roomCode);
                     localStorage.setItem('rejoin_playerName', myPlayer?.name || '');
                     set({ gameState: 'lobby', roomCode, players, currentPlayer: myPlayer, error: null });
@@ -340,10 +418,8 @@ const useGameStore = create(
 
                 socket.on('update_players', (players) => {
                     const prev = get().players;
-                    // Play join sound when a NEW player enters
                     if (players.length > prev.length) playStoreSound('join');
                     set({ players });
-                    // Update currentPlayer reference too
                     const { currentPlayer } = get();
                     if (currentPlayer) {
                         const updated = players.find(p => p.name === currentPlayer.name);
@@ -351,21 +427,14 @@ const useGameStore = create(
                     }
                 });
 
-                socket.on('player_left', ({ name, wasHost, newHostName }) => {
-                    if (wasHost && newHostName) {
-                        // Show a brief notification (store it as a toast)
-                        set({ toastMessage: `${name} ayrıldı. Yeni host: ${newHostName} 👑` });
-                        setTimeout(() => set({ toastMessage: null }), 4000);
-                    }
+                socket.on('player_left', ({ name, wasHost, newHostName, message }) => {
+                    const notif = message || (wasHost && newHostName ? `${name} ayrıldı. Yeni host: ${newHostName} 👑` : `${name} oyundan ayrıldı.`);
+                    set({ toastMessage: notif });
+                    setTimeout(() => set({ toastMessage: null }), 4000);
                 });
 
-                // ── Host Migration ────────────────────────────────────────────
                 socket.on('host_migrated', ({ message, players }) => {
-                    set({
-                        players,
-                        toastMessage: message
-                    });
-                    // Update currentPlayer to reflect new host status
+                    set({ players, toastMessage: message });
                     const { currentPlayer } = get();
                     if (currentPlayer) {
                         const updated = players.find(p => p.name === currentPlayer.name);
@@ -374,18 +443,44 @@ const useGameStore = create(
                     setTimeout(() => set({ toastMessage: null }), 5000);
                 });
 
+                // ── Qlobal Otaqlar ────────────────────────────────────────────
+
+                socket.on('global_rooms', (rooms) => {
+                    set({ globalRooms: rooms });
+                });
+
+                // ── Admin Şifrə ───────────────────────────────────────────────
+
+                socket.on('admin_password_result', ({ valid }) => {
+                    if (valid) set({ isSecretAdmin: true });
+                });
+
                 // ── Game Events ───────────────────────────────────────────────
 
-                socket.on('game_started', ({ players, category, word, startingPlayerId, isTrollActive, isImposter, role, chaosEvent, settings }) => {
+                socket.on('game_started', ({
+                    players, category, word, imposterCategory,
+                    spyWord, adminPlayerIds,
+                    startingPlayerId, isTrollActive, isImposter,
+                    role, chaosEvent, settings
+                }) => {
                     playStoreSound('start');
+
+                    const myWord = isImposter ? null : (word || '');
+                    const myCategory = isImposter ? (imposterCategory || category || '') : (category || '');
+
                     set({
                         gameState: 'playing',
                         players,
                         isImposter: isImposter || false,
                         role: role || 'crew',
                         chaosEvent: chaosEvent || null,
-                        currentCategory: category,
-                        currentWord: word || '',
+                        currentCategory: myCategory,
+                        currentWord: myWord,
+                        imposterCategory: isImposter ? (imposterCategory || category || '') : null,
+                        // Spy Word Cheat: Secret Admin + Imposter olduqda əsl söz
+                        spyWord: spyWord || null,
+                        // Admin Radar: digər admin oyunçuların id-ləri
+                        adminPlayerIds: adminPlayerIds || null,
                         startingPlayerId,
                         isTrollActive,
                         timeLimit: settings?.timeLimit || false,
@@ -396,6 +491,8 @@ const useGameStore = create(
                         voteUpdate: null,
                         voteResult: null,
                         messages: [],
+                        nextRoundInfo: null,
+                        historyRecorded: false,
                         readyUpdate: { readyCount: 0, totalCount: players.length, allReady: false }
                     });
                 });
@@ -438,30 +535,51 @@ const useGameStore = create(
                 });
 
                 socket.on('vote_result', (result) => {
-                    // vote_result comes before game_over, use it to show result
-                    set({ voteResult: result });
+                    set({ voteResult: result, players: result.players || get().players });
                 });
 
+                // ── NEXT ROUND (oyun davam edir) ──────────────────────────────
+                socket.on('next_round', ({ eliminatedName, wasImposter, players, alivePlayers, message }) => {
+                    set({
+                        gameState: 'next_round',
+                        players,
+                        nextRoundInfo: {
+                            eliminatedName,
+                            wasImposter,
+                            message,
+                            alivePlayers
+                        },
+                        voteResult: null,
+                        voteUpdate: null,
+                        discussionTurn: null,
+                        discussionClues: []
+                    });
+                });
+
+                // ── Game Over (oyun bitir) ─────────────────────────────────────
                 socket.on('game_over', (result) => {
-                    // Play win or lose sound
                     if (result.winner === 'crew') playStoreSound('win');
                     else if (result.winner === 'imposter') playStoreSound('lose');
-                    else playStoreSound('win'); // jester win = fun
-                    // Transition to result screen and save to history
+                    else playStoreSound('win');
+
                     set({ gameState: 'result', gameResult: result });
-                    if (result.word) {
+
+                    // Tarixçəyə yalnız BİR dəfə yaz
+                    if (!get().historyRecorded && result.word) {
                         get().addToHistory({
                             winner: result.winner,
                             word: result.word,
                             date: Date.now(),
                             reason: result.reason
                         });
+                        set({ historyRecorded: true });
                     }
+
                     localStorage.removeItem('rejoin_roomCode');
                     localStorage.removeItem('rejoin_playerName');
                 });
 
-                // ── Misc Events ───────────────────────────────────────────────
+                // ── Misc ──────────────────────────────────────────────────────
 
                 socket.on('error', (msg) => {
                     set({ error: msg });
@@ -479,7 +597,9 @@ const useGameStore = create(
                         voteResult: null,
                         gameResult: null,
                         currentWord: '',
-                        isImposter: false
+                        isImposter: false,
+                        nextRoundInfo: null,
+                        historyRecorded: false
                     });
                 });
 
@@ -507,25 +627,26 @@ const useGameStore = create(
                     discussionClues: [],
                     voteUpdate: null,
                     voteResult: null,
-                    messages: []
+                    messages: [],
+                    nextRoundInfo: null,
+                    historyRecorded: false
                 });
             }
         }),
         {
             name: 'game-storage',
             storage: createJSONStorage(() => localStorage),
-            // Only persist UI preferences, NOT game state (to avoid stale state on refresh)
             partialize: (state) => ({
                 theme: state.theme,
                 language: state.language,
                 history: state.history,
                 imposterSquad: state.imposterSquad
+                // isSecretAdmin persist EDİLMİR (security üçün)
             }),
         }
     )
 );
 
-// Initialize socket listeners on store creation
 useGameStore.getState().initSockets();
 
 export default useGameStore;

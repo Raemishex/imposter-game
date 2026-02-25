@@ -1,0 +1,28 @@
+nohup: girdi yok sayılıyor
+[SERVER] Running on port 3001
+[CONNECT] XBHK7ZaF_A51q3-tAAAB
+[CONNECT] bYhPU_VgG5C3K6lzAAAD
+[DISCONNECT] XBHK7ZaF_A51q3-tAAAB
+[DISCONNECT] bYhPU_VgG5C3K6lzAAAD
+[CONNECT] iv1gwH7DsKkdtgrKAAAF
+[ROOM] "5321" created by tester (özəl, region: )
+[DISCONNECT] iv1gwH7DsKkdtgrKAAAF
+[CONNECT] -3or6rupk3y0zSv-AAAH
+[CONNECT] 5Z5MT0tuom0oSiWDAAAJ
+[ROOM] "RAMONUNMELEKLERI" created by tester (açıq, region: )
+[ROOM] "567V" created by tester-123 (açıq, region: )
+[JOIN] tester-123 -> RAMONUNMELEKLERI
+[ADMIN] -3or6rupk3y0zSv-AAAH admin olaraq qeydiyyatdan keçdi (RAMONUNMELEKLERI)
+[CONNECT] xGwdpS3e5I4ZLYEbAAAL
+[ROOM] "CERD" created by tester-12345 (açıq, region: )
+[JOIN] tester-12345 -> RAMONUNMELEKLERI
+[ADMIN] 5Z5MT0tuom0oSiWDAAAJ admin olaraq qeydiyyatdan keçdi (RAMONUNMELEKLERI)
+[GAME] RAMONUNMELEKLERI round 1 started. Word: Smartfon, Cat: Texnologiya
+[READY] RAMONUNMELEKLERI: 1/3 hazır
+[READY] RAMONUNMELEKLERI: 2/3 hazır
+[READY] RAMONUNMELEKLERI: 3/3 hazır
+[RAMONUNMELEKLERI] Turn 1/3: tester-123 (NaNs)
+[RAMONUNMELEKLERI] Turn 2/3: tester-12345 (NaNs)
+[RAMONUNMELEKLERI] Turn 3/3: tester (NaNs)
+[RAMONUNMELEKLERI] Discussion ended. Transitioning to voting.
+[VOTE] RAMONUNMELEKLERI: crew wins. Eliminated: tester

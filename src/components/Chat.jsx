@@ -5,7 +5,7 @@ import { MessageCircle, X, Send } from 'lucide-react';
 import { UI_TEXTS } from '../translations';
 
 const Chat = () => {
-    const { messages, sendMessage, language, mode, currentPlayer, players } = useGameStore();
+    const { messages, sendMessage, language, mode, currentPlayer, players, roomCode } = useGameStore();
     const [isOpen, setIsOpen] = useState(false);
     const [text, setText] = useState('');
     const [hasUnread, setHasUnread] = useState(false);
@@ -57,8 +57,8 @@ const Chat = () => {
         }
     }, [messages, isOpen, mode]);
 
-    // Only show in online mode
-    if (mode !== 'online') return null;   
+    // Yalnız online + otaqda bağlı olduqda göstər
+    if (mode !== 'online' || !roomCode) return null;
 
     const handleSend = (e) => {
         e.preventDefault();

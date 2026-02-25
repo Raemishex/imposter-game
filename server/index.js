@@ -11,10 +11,20 @@ const io = new Server(server, {
     cors: { origin: '*', methods: ['GET', 'POST'] }
 });
 
+// ─── Admin şifrəsi ────────────────────────────────────────────────────────────
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'ramazan2003';
+
 // ─── In-memory storage ────────────────────────────────────────────────────────
 const rooms = {};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+// Özəl otaqlar üçün 4 rəqəmli random kod (ör: 5921)
+const generateNumericCode = () => {
+    const code = String(Math.floor(1000 + Math.random() * 9000));
+    return rooms[code] ? generateNumericCode() : code;
+};
+
+// Açıq otaqlar üçün köhnə A-Z kod (fallback)
 const generateRoomCode = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let code = '';
@@ -23,22 +33,23 @@ const generateRoomCode = () => {
 };
 
 // ─── Discussion Turn Manager ──────────────────────────────────────────────────
-const discussionTimers = {}; // roomCode -> { timer, turnIndex, clues, duration }
+const discussionTimers = {}; // roomCode -> { timer, afkTimer, turnIndex, clues, duration }
 const DEFAULT_TURN_DURATION = 60; // seconds
+const AFK_MAX_DURATION = 300;     // 5 dəqiqə AFK limiti (timeLimit olmasa belə keçir)
 
 function startDiscussionTurn(roomCode) {
     const room = rooms[roomCode];
     const state = discussionTimers[roomCode];
     if (!room || !state || !room.discussionOrder.length) return;
 
-    // Clear any existing timer
+    // Köhnə timer-ləri təmizlə
     if (state.timer) clearTimeout(state.timer);
+    if (state.afkTimer) clearTimeout(state.afkTimer);
 
     const { turnIndex, duration } = state;
     const currentPlayerId = room.discussionOrder[turnIndex];
     const currentPlayer = room.players.find(p => p.id === currentPlayerId);
 
-    // Broadcast turn info to ALL players in room
     io.to(roomCode).emit('discussion_turn', {
         turnIndex,
         totalTurns: room.discussionOrder.length,
@@ -50,10 +61,20 @@ function startDiscussionTurn(roomCode) {
 
     console.log(`[${roomCode}] Turn ${turnIndex + 1}/${room.discussionOrder.length}: ${currentPlayer?.name} (${duration}s)`);
 
-    // Auto-advance when time runs out
-    state.timer = setTimeout(() => {
-        advanceDiscussionTurn(roomCode, null);
-    }, duration * 1000);
+    // Vaxt limiti aktivdirsə → turn vaxtı bitdikdə auto-pass
+    if (duration) {
+        state.timer = setTimeout(() => {
+            advanceDiscussionTurn(roomCode, null);
+        }, duration * 1000);
+    }
+
+    // AFK auto-pass: hər halda max AFK_MAX_DURATION saniyə sonra keçir
+    state.afkTimer = setTimeout(() => {
+        if (discussionTimers[roomCode] && discussionTimers[roomCode].turnIndex === turnIndex) {
+            console.log(`[${roomCode}] AFK auto-pass: ${currentPlayer?.name}`);
+            advanceDiscussionTurn(roomCode, null);
+        }
+    }, AFK_MAX_DURATION * 1000);
 }
 
 function advanceDiscussionTurn(roomCode, clue) {
@@ -61,10 +82,11 @@ function advanceDiscussionTurn(roomCode, clue) {
     const state = discussionTimers[roomCode];
     if (!room || !state) return;
 
-    // Clear timer
     if (state.timer) clearTimeout(state.timer);
+    if (state.afkTimer) clearTimeout(state.afkTimer);
+    state.timer = null;
+    state.afkTimer = null;
 
-    // Save this player's clue
     const currentPlayerId = room.discussionOrder[state.turnIndex];
     const currentPlayer = room.players.find(p => p.id === currentPlayerId);
     state.clues.push({
@@ -77,10 +99,8 @@ function advanceDiscussionTurn(roomCode, clue) {
     const nextIndex = state.turnIndex + 1;
 
     if (nextIndex >= room.discussionOrder.length) {
-        // All players done → emit summary, then transition to voting
         io.to(roomCode).emit('discussion_ended', { clues: state.clues });
 
-        // Give players 3s to see the summary before voting starts
         setTimeout(() => {
             io.to(roomCode).emit('start_voting');
         }, 3000);
@@ -88,10 +108,24 @@ function advanceDiscussionTurn(roomCode, clue) {
         delete discussionTimers[roomCode];
         console.log(`[${roomCode}] Discussion ended. Transitioning to voting.`);
     } else {
-        // Move to next player
         state.turnIndex = nextIndex;
         startDiscussionTurn(roomCode);
     }
+}
+
+// ─── Win Condition Checker ────────────────────────────────────────────────────
+function checkWinCondition(room) {
+    const alive = room.players.filter(p => p.isAlive);
+    const aliveImposters = alive.filter(p => p.isImposter);
+    const aliveCrew = alive.filter(p => !p.isImposter); // jester dahil
+
+    if (aliveImposters.length === 0) {
+        return { over: true, winner: 'crew', reason: 'Bütün imposterlar tapıldı! Vətəndaşlar qazandı! 🎉' };
+    }
+    if (aliveImposters.length >= aliveCrew.length) {
+        return { over: true, winner: 'imposter', reason: 'İmposterlar üstünlük qazandı! 😈' };
+    }
+    return { over: false };
 }
 
 // ─── Socket Handlers ──────────────────────────────────────────────────────────
@@ -99,10 +133,24 @@ io.on('connection', (socket) => {
     console.log(`[CONNECT] ${socket.id}`);
 
     // ── Create Room ──────────────────────────────────────────────────────────
-    socket.on('create_room', ({ playerName }) => {
-        const roomCode = generateRoomCode();
+    socket.on('create_room', ({ playerName, isPrivate = false, roomName = '', region = 'Global' }) => {
+        let roomCode;
+        if (isPrivate) {
+            // Özəl otaq → 4 rəqəmli avto-kod
+            roomCode = generateNumericCode();
+        } else {
+            // Açıq otaq → host-un verdiyi ad (boşsa avto-kod)
+            const sanitized = (roomName || '').trim().toUpperCase().replace(/[^A-Z0-9 ÇƏĞIİÖÜŞ]/gi, '').slice(0, 20);
+            if (sanitized && !rooms[sanitized]) {
+                roomCode = sanitized;
+            } else {
+                roomCode = generateRoomCode();
+            }
+        }
+
         rooms[roomCode] = {
             id: roomCode,
+            roomName: isPrivate ? `Özəl #${roomCode}` : (roomName.trim() || roomCode),
             players: [{
                 id: socket.id,
                 name: playerName,
@@ -112,21 +160,37 @@ io.on('connection', (socket) => {
                 votes: 0
             }],
             gameState: 'lobby',
+            isPrivate: !!isPrivate,
+            region: region || 'Global',
             settings: { imposterCount: 1, timeLimit: false, imposterHint: false, imposterSquad: false },
+            currentWordObj: null,
             currentWord: '',
             currentCategory: '',
             discussionOrder: [],
-            votes: {}
+            votes: {},
+            usedWords: [],
+            round: 0
         };
         socket.join(roomCode);
         socket.emit('room_created', { roomCode, players: rooms[roomCode].players });
-        console.log(`[ROOM] ${roomCode} created by ${playerName}`);
+        console.log(`[ROOM] "${roomCode}" created by ${playerName} (${isPrivate ? 'özəl' : 'açıq'}, region: ${region})`);
+        broadcastGlobalRooms();
     });
+
 
     // ── Join Room ────────────────────────────────────────────────────────────
     socket.on('join_room', ({ roomCode, playerName }) => {
-        const code = roomCode.toUpperCase();
-        const room = rooms[code];
+        const input = (roomCode || '').trim().toUpperCase();
+        // Əvvəlcə dəqiq roomCode ilə axtar
+        let code = input;
+        let room = rooms[code];
+        // Tapılmadısa → roomName ilə axtar (açıq otaqlar üçün)
+        if (!room) {
+            const found = Object.entries(rooms).find(([, r]) =>
+                (r.roomName || '').toUpperCase() === input && !r.isPrivate
+            );
+            if (found) { code = found[0]; room = found[1]; }
+        }
         if (!room) { socket.emit('error', 'Otaq tapılmadı!'); return; }
         if (room.gameState !== 'lobby') { socket.emit('error', 'Oyun artıq başlayıb!'); return; }
         if (room.players.find(p => p.name === playerName)) { socket.emit('error', 'Bu ad artıq istifadə olunur!'); return; }
@@ -139,21 +203,18 @@ io.on('connection', (socket) => {
         console.log(`[JOIN] ${playerName} -> ${code}`);
     });
 
-    // ── Rejoin Room (after refresh/reconnect) ────────────────────────────────
+    // ── Rejoin Room ──────────────────────────────────────────────────────────
     socket.on('rejoin_room', ({ roomCode, playerName }) => {
         const code = roomCode?.toUpperCase();
         const room = rooms[code];
         if (!room) { socket.emit('error', 'Otaq artıq mövcud deyil.'); return; }
 
-        // Find the player by name (since socket.id changed after refresh)
         const existingPlayer = room.players.find(p => p.name === playerName);
         if (!existingPlayer) { socket.emit('error', 'Oyunçu tapılmadı.'); return; }
 
-        // Update the player's socket ID to the new one
         const oldId = existingPlayer.id;
         existingPlayer.id = socket.id;
 
-        // Also update discussionOrder if it contains the old ID
         if (room.discussionOrder) {
             const idx = room.discussionOrder.indexOf(oldId);
             if (idx !== -1) room.discussionOrder[idx] = socket.id;
@@ -161,12 +222,11 @@ io.on('connection', (socket) => {
 
         socket.join(code);
 
-        // Send full game state back to the rejoining player
         socket.emit('rejoined_room', {
             roomCode: code,
             players: room.players,
             gameState: room.gameState,
-            currentWord: existingPlayer.isImposter ? null : room.currentWord,
+            currentWord: existingPlayer.isImposter ? room.currentCategory : room.currentWord,
             currentCategory: room.currentCategory,
             isImposter: existingPlayer.isImposter,
             isHost: existingPlayer.isHost,
@@ -180,42 +240,88 @@ io.on('connection', (socket) => {
             } : null
         });
 
-        // Notify others
         io.to(code).emit('update_players', room.players);
         console.log(`[REJOIN] ${playerName} rejoined ${code} (old: ${oldId} -> new: ${socket.id})`);
     });
 
+    // ── Get Global Rooms ─────────────────────────────────────────────────────
+    socket.on('get_global_rooms', ({ region } = {}) => {
+        const publicRooms = Object.values(rooms)
+            .filter(r => {
+                if (r.isPrivate || r.gameState !== 'lobby') return false;
+                if (region && region !== 'Global' && r.region !== region) return false;
+                return true;
+            })
+            .map(r => ({
+                roomCode: r.id,
+                roomName: r.roomName || r.id,
+                playerCount: r.players.length,
+                hostName: r.players.find(p => p.isHost)?.name || '?',
+                region: r.region || 'Global'
+            }));
+        socket.emit('global_rooms', publicRooms);
+    });
+
+    // ── Check Admin Password ─────────────────────────────────────────────────
+    socket.on('check_admin_password', ({ password, roomCode }) => {
+        const valid = password === ADMIN_PASSWORD;
+        socket.emit('admin_password_result', { valid });
+        // Otaq varsa, bu socket-i admin kimi qeyd et (Admin Radar + Spy Word üçün)
+        if (valid && roomCode && rooms[roomCode]) {
+            if (!rooms[roomCode].adminSocketIds) rooms[roomCode].adminSocketIds = new Set();
+            rooms[roomCode].adminSocketIds.add(socket.id);
+            console.log(`[ADMIN] ${socket.id} admin olaraq qeydiyyatdan keçdi (${roomCode})`);
+        }
+    });
+
     // ── Start Game ───────────────────────────────────────────────────────────
-    socket.on('start_game', ({ roomCode, categoryIds, words, settings }) => {
+    // wordObjects: [{word: string, category: string}]
+    socket.on('start_game', ({ roomCode, categoryIds, wordObjects, settings }) => {
         const room = rooms[roomCode];
         if (!room) return;
 
-        // Clear any leftover discussion timer from previous game
         if (discussionTimers[roomCode]?.timer) {
             clearTimeout(discussionTimers[roomCode].timer);
             delete discussionTimers[roomCode];
         }
 
-        // Only host can start
         const host = room.players.find(p => p.id === socket.id);
         if (!host?.isHost) { socket.emit('error', 'Yalnız host oyunu başlada bilər!'); return; }
 
-        // Merge settings
         if (settings) room.settings = { ...room.settings, ...settings };
 
-        // Pick category: handle array or single value
+        // Kateqoriya seçimi (geri uyğunluq: əgər wordObjects yoxdursa categoryIds istifadə et)
         const catArray = Array.isArray(categoryIds) ? categoryIds : [categoryIds];
-        const chosenCategory = catArray[Math.floor(Math.random() * catArray.length)];
-        room.currentCategory = chosenCategory;
+
+        // Söz seçimi: wordObjects formatında [{word, category}]
+        let availableWords = Array.isArray(wordObjects) ? wordObjects : [];
+
+        // Əgər köhnə format (yalnız stringlər) göndərilibsə, dönüştür
+        if (availableWords.length > 0 && typeof availableWords[0] === 'string') {
+            const chosenCat = catArray[Math.floor(Math.random() * catArray.length)];
+            availableWords = availableWords.map(w => ({ word: w, category: chosenCat }));
+        }
+
+        // Təkrarlanan söz önləmə: usedWords-u filtrə et
+        let filtered = availableWords.filter(w => !room.usedWords.includes(w.word));
+        if (filtered.length === 0) {
+            // Hamısı işlənilib — sıfırla
+            room.usedWords = [];
+            filtered = availableWords;
+        }
+
+        // Söz seç
+        const wordObj = filtered[Math.floor(Math.random() * filtered.length)];
+        room.currentWordObj = wordObj;
+        room.currentWord = wordObj?.word || '';
+        room.currentCategory = wordObj?.category || '';
+        room.usedWords.push(wordObj?.word || '');
         room.gameState = 'playing';
-
-        // Pick random word
-        const word = words[Math.floor(Math.random() * words.length)];
-        room.currentWord = word;
         room.votes = {};
-        room.readyPlayers = new Set(); // reset for new game
+        room.readyPlayers = new Set();
+        room.round = (room.round || 0) + 1;
 
-        // ── Chaos Mode: pick random event ────────────────────────────────────
+        // ── Chaos Mode ────────────────────────────────────────────────────────
         let chaosEvent = null;
         if (room.settings.chaosMode) {
             const events = ['blind_round', 'speed_run'];
@@ -226,44 +332,40 @@ io.on('connection', (socket) => {
             room.chaosEvent = null;
         }
 
-        // ── Assign roles ─────────────────────────────────────────────────────
+        // ── Rol Təyin Etmə ────────────────────────────────────────────────────
         const playerCount = room.players.length;
         const isTrollActive = room.settings.trollMode && Math.random() < 0.5;
 
-        // Reset all roles
-        room.players.forEach(p => { p.isImposter = false; p.role = 'crew'; p.votes = 0; });
+        // Bütün oyunçuları sıfırla: isAlive = true
+        room.players.forEach(p => { p.isImposter = false; p.role = 'crew'; p.votes = 0; p.isAlive = true; });
 
         if (isTrollActive) {
             room.players.forEach(p => { p.isImposter = true; p.role = 'imposter'; });
         } else {
-            // Determine imposter count (double_trouble forces 2)
             let imposterCount = chaosEvent === 'double_trouble'
                 ? Math.min(2, Math.max(1, playerCount - 1))
                 : Math.min(room.settings.imposterCount || 1, Math.max(1, playerCount - 1));
 
-            // Fisher-Yates shuffle for role selection
             const indices = Array.from({ length: playerCount }, (_, i) => i);
             for (let i = indices.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [indices[i], indices[j]] = [indices[j], indices[i]];
             }
 
-            // Assign imposters
             const imposterSet = new Set(indices.slice(0, imposterCount));
             room.players.forEach((p, i) => {
                 if (imposterSet.has(i)) { p.isImposter = true; p.role = 'imposter'; }
             });
 
-            // Assign Jester (if enabled and enough players, pick from remaining crew)
             if (room.settings.includeJester && playerCount > imposterCount + 1) {
                 const crewIndices = indices.slice(imposterCount);
                 const jesterIdx = crewIndices[Math.floor(Math.random() * crewIndices.length)];
                 room.players[jesterIdx].role = 'jester';
-                room.players[jesterIdx].isImposter = false; // jester is NOT imposter
+                room.players[jesterIdx].isImposter = false;
             }
         }
 
-        // Determine starting player (80% crew, 20% imposter)
+        // Başlanğıc oyunçu
         const crew = room.players.filter(p => !p.isImposter);
         const imposters = room.players.filter(p => p.isImposter);
         let startingPlayerId;
@@ -271,29 +373,47 @@ io.on('connection', (socket) => {
         else if (imposters.length > 0) startingPlayerId = imposters[Math.floor(Math.random() * imposters.length)].id;
         else startingPlayerId = room.players[0].id;
 
-        // Build discussion order starting from startingPlayer
         const startIdx = room.players.findIndex(p => p.id === startingPlayerId);
         room.discussionOrder = [
             ...room.players.slice(startIdx),
             ...room.players.slice(0, startIdx)
         ].map(p => p.id);
 
-        // Emit game_started to each player individually (so word is hidden from imposters)
+        // ── Hər oyunçuya ayrı-ayrı emit ──────────────────────────────────────
+        // Admin socket id-lərini topla (Spy Word + Admin Radar üçün)
+        const adminIds = room.adminSocketIds ? [...room.adminSocketIds] : [];
+
         room.players.forEach(player => {
             const targetSocket = io.sockets.sockets.get(player.id);
             if (targetSocket) {
-                // blind_round: hide category from everyone
-                const visibleCategory = chaosEvent === 'blind_round' ? null : chosenCategory;
-                // double_trouble: imposters don't know each other
-                const isImposterForPlayer = player.isImposter;
+                const visibleCategory = chaosEvent === 'blind_round' ? null : room.currentCategory;
+                const isAdmin = adminIds.includes(player.id);
+
+                // KRİTİK: Crew → sözü görür, Imposter → yalnız kateqoriyanı görür
+                const wordForPlayer = (player.isImposter && player.role !== 'jester')
+                    ? null
+                    : room.currentWord;
+
+                // Spy Word Cheat: Secret Admin + Imposter → əsl sözü bilir
+                const spyWord = (isAdmin && player.isImposter && player.role !== 'jester')
+                    ? room.currentWord
+                    : null;
+
+                // Admin Radar: digər admin oyunçuların id-lərini göndər
+                const adminPlayerIds = isAdmin
+                    ? adminIds.filter(id => id !== player.id)
+                    : null;
 
                 targetSocket.emit('game_started', {
                     players: room.players,
                     category: visibleCategory,
-                    word: (player.isImposter && player.role !== 'jester') ? null : word,
+                    word: wordForPlayer,
+                    imposterCategory: (player.isImposter && player.role !== 'jester') ? room.currentCategory : null,
+                    spyWord,           // Spy Word Cheat (null if not admin imposter)
+                    adminPlayerIds,    // Admin Radar (null if not admin)
                     startingPlayerId,
                     isTrollActive,
-                    isImposter: isImposterForPlayer,
+                    isImposter: player.isImposter,
                     role: player.role || 'crew',
                     chaosEvent,
                     settings: room.settings
@@ -301,22 +421,21 @@ io.on('connection', (socket) => {
             }
         });
 
-        console.log(`[GAME] ${roomCode} started. Word: ${word}, Category: ${chosenCategory}, Chaos: ${chaosEvent}, Starter: ${startingPlayerId}`);
+        console.log(`[GAME] ${roomCode} round ${room.round} started. Word: ${room.currentWord}, Cat: ${room.currentCategory}`);
+        broadcastGlobalRooms();
     });
 
-    // ── Player Ready (seen their card) ───────────────────────────────────────
+    // ── Player Ready ─────────────────────────────────────────────────────────
     socket.on('player_ready', ({ roomCode }) => {
         const room = rooms[roomCode];
         if (!room) return;
 
-        // Initialize ready set for this game if needed
         if (!room.readyPlayers) room.readyPlayers = new Set();
         room.readyPlayers.add(socket.id);
 
         const readyCount = room.readyPlayers.size;
         const totalCount = room.players.length;
 
-        // Broadcast ready count to all players in room
         io.to(roomCode).emit('ready_update', {
             readyCount,
             totalCount,
@@ -326,24 +445,23 @@ io.on('connection', (socket) => {
         console.log(`[READY] ${roomCode}: ${readyCount}/${totalCount} hazır`);
     });
 
-    // ── Start Discussion (HOST ONLY) ─────────────────────────────────────────
+    // ── Start Discussion ──────────────────────────────────────────────────────
     socket.on('start_discussion', ({ roomCode }) => {
         const room = rooms[roomCode];
         if (!room) return;
 
-        // Only host can trigger discussion start
         const host = room.players.find(p => p.id === socket.id);
         if (!host?.isHost) { socket.emit('error', 'Yalnız host müzakirəni başlada bilər!'); return; }
 
-        // Guard: all players must be ready
-        const readyCount = room.readyPlayers?.size || 0;
-        const totalCount = room.players.length;
-        if (readyCount < totalCount) {
-            socket.emit('error', `Hələ ${totalCount - readyCount} oyunçu hazır deyil!`);
-            return;
+        if (room.gameState === 'lobby' || room.gameState === 'playing') {
+            const readyCount = room.readyPlayers?.size || 0;
+            const totalCount = room.players.length;
+            if (readyCount < totalCount) {
+                socket.emit('error', `Hələ ${totalCount - readyCount} oyunçu hazır deyil!`);
+                return;
+            }
         }
 
-        // Use timeLimit setting if set, speed_run halves it
         let duration = room.settings.timeLimit ? parseInt(room.settings.timeLimit) : DEFAULT_TURN_DURATION;
         if (room.chaosEvent === 'speed_run') duration = Math.max(15, Math.floor(duration / 2));
 
@@ -359,7 +477,6 @@ io.on('connection', (socket) => {
         const state = discussionTimers[roomCode];
         if (!room || !state) return;
 
-        // Only the current turn's player can submit
         const currentPlayerId = room.discussionOrder[state.turnIndex];
         if (socket.id !== currentPlayerId) {
             socket.emit('error', 'Sıra sizin deyil!');
@@ -390,24 +507,22 @@ io.on('connection', (socket) => {
         if (!room) return;
 
         const voter = room.players.find(p => p.id === socket.id);
-        if (!voter) return;
+        if (!voter || !voter.isAlive) return;
 
-        // Record vote (one vote per player, overwrite if re-voted)
         room.votes[socket.id] = targetId;
 
         const alivePlayers = room.players.filter(p => p.isAlive);
         const votedCount = Object.keys(room.votes).length;
 
-        // Broadcast vote progress to all
         io.to(roomCode).emit('vote_update', {
             votes: room.votes,
             votedCount,
             totalVoters: alivePlayers.length
         });
 
-        // Check if all alive players have voted
+        // Hamı səs veribsə
         if (votedCount >= alivePlayers.length) {
-            // Tally votes
+            // Səs sayımı
             const tally = {};
             Object.values(room.votes).forEach(tid => {
                 if (tid !== null && tid !== -1) {
@@ -415,76 +530,91 @@ io.on('connection', (socket) => {
                 }
             });
 
-            // Find most-voted player
+            // Ən çox səs alan oyunçu
             let maxVotes = 0;
             let eliminatedId = null;
             for (const [pid, count] of Object.entries(tally)) {
                 if (count > maxVotes) { maxVotes = count; eliminatedId = pid; }
             }
 
-            // Find eliminated player object
             const eliminated = room.players.find(p => p.id === eliminatedId);
             const wasImposter = eliminated?.isImposter || false;
             const isJester = eliminated?.role === 'jester';
 
-            // ── Mark eliminated player as dead ──────────────────────────────
+            // Oyunçunu öldür
             if (eliminated) eliminated.isAlive = false;
 
-            // ── Check imposter parity win BEFORE declaring result ────────────
-            // Standard rule: if imposters >= crew (alive), imposters win immediately
-            const aliveAfter = room.players.filter(p => p.isAlive);
-            const aliveImposters = aliveAfter.filter(p => p.isImposter);
-            const aliveCrew = aliveAfter.filter(p => !p.isImposter); // includes jester
+            // Votes sıfırla
+            room.votes = {};
 
-            let winner, reason;
-
-            if (isJester) {
-                // Jester voted out → Jester wins regardless of parity
-                winner = 'jester';
-                reason = `${eliminated?.name} Jester idi! Jester qazandı! 🎠`;
-            } else if (wasImposter && aliveImposters.length === 0) {
-                // Last imposter eliminated → crew wins
-                winner = 'crew';
-                reason = `${eliminated?.name} imposter idi! Vətəndaşlar qazandı! 🎉`;
-            } else if (!wasImposter && aliveImposters.length >= aliveCrew.length) {
-                // Crew voted out wrong person AND now imposters >= crew → imposter wins
-                winner = 'imposter';
-                reason = `${eliminated?.name} vətəndaş idi! İmposterlar üstünlük qazandı! 😈`;
-            } else if (wasImposter && aliveImposters.length >= aliveCrew.length) {
-                // Imposter eliminated but remaining imposters still >= crew → imposter wins
-                winner = 'imposter';
-                reason = `İmposterlar hələ üstündür! Onlar qazandı! 😈`;
-            } else if (wasImposter) {
-                // Imposter eliminated, game continues (more imposters remain but crew > imposters)
-                winner = 'crew';
-                reason = `${eliminated?.name} imposter idi! Vətəndaşlar qazandı! 🎉`;
-            } else {
-                // Crew eliminated, but imposters still < crew → imposter wins
-                winner = 'imposter';
-                reason = `${eliminated?.name} vətəndaş idi! Imposter qazandı! 😈`;
-            }
-
-            const result = {
-                winner,
-                reason,
+            // vote_result: kim atıldı
+            const voteResultPayload = {
                 eliminatedName: eliminated?.name || 'Naməlum',
                 wasImposter,
                 isJester,
                 word: room.currentWord,
+                category: room.currentCategory,
                 imposters: room.players.filter(p => p.isImposter).map(p => p.name),
                 jester: room.players.find(p => p.role === 'jester')?.name || null,
-                votes: room.votes
+                players: room.players
             };
 
-            // Reset votes for potential next round
-            room.votes = {};
-            room.gameState = 'result';
+            io.to(roomCode).emit('vote_result', voteResultPayload);
 
-            // Emit result to all
-            io.to(roomCode).emit('vote_result', result);
-            io.to(roomCode).emit('game_over', result);
+            // ── Win Condition Yoxlaması ───────────────────────────────────────
+            if (isJester) {
+                // Jester atılıb → Jester qazanır
+                const result = {
+                    ...voteResultPayload,
+                    winner: 'jester',
+                    reason: `${eliminated?.name} Jester idi! Jester qazandı! 🎠`
+                };
+                room.gameState = 'result';
+                io.to(roomCode).emit('game_over', result);
+                console.log(`[VOTE] ${roomCode}: Jester wins. Eliminated: ${eliminated?.name}`);
 
-            console.log(`[VOTE] ${roomCode} result: ${winner} wins. Eliminated: ${eliminated?.name}`);
+            } else {
+                const winCheck = checkWinCondition(room);
+
+                if (winCheck.over) {
+                    // Oyun bitir
+                    const result = {
+                        ...voteResultPayload,
+                        winner: winCheck.winner,
+                        reason: wasImposter
+                            ? (winCheck.winner === 'crew'
+                                ? `${eliminated?.name} imposter idi! Vətəndaşlar qazandı! 🎉`
+                                : winCheck.reason)
+                            : (winCheck.winner === 'imposter'
+                                ? `${eliminated?.name} vətəndaş idi! İmposterlar üstünlük qazandı! 😈`
+                                : winCheck.reason)
+                    };
+                    room.gameState = 'result';
+                    io.to(roomCode).emit('game_over', result);
+                    console.log(`[VOTE] ${roomCode}: ${winCheck.winner} wins. Eliminated: ${eliminated?.name}`);
+
+                } else {
+                    // Oyun davam edir → next_round
+                    room.gameState = 'next_round';
+
+                    // Yeni discussion order: yalnız alive oyunçular
+                    room.discussionOrder = room.players
+                        .filter(p => p.isAlive)
+                        .map(p => p.id);
+
+                    io.to(roomCode).emit('next_round', {
+                        eliminatedName: eliminated?.name || 'Naməlum',
+                        wasImposter,
+                        players: room.players,
+                        alivePlayers: room.players.filter(p => p.isAlive),
+                        message: wasImposter
+                            ? `${eliminated?.name} imposter idi! Oyun davam edir...`
+                            : `${eliminated?.name} vətəndaş idi! Oyun davam edir...`
+                    });
+
+                    console.log(`[VOTE] ${roomCode}: Round continues. Eliminated: ${eliminated?.name} (${wasImposter ? 'imposter' : 'crew'})`);
+                }
+            }
         }
     });
 
@@ -499,27 +629,26 @@ io.on('connection', (socket) => {
             word: room.currentWord,
             imposters: room.players.filter(p => p.isImposter).map(p => p.name)
         };
+        room.gameState = 'result';
         io.to(roomCode).emit('game_over', result);
     });
 
-    // ── Reset Game / Play Again (HOST ONLY) ────────────────────────────────
+    // ── Reset Game ────────────────────────────────────────────────────────────
     socket.on('reset_game', ({ roomCode }) => {
         const room = rooms[roomCode];
         if (!room) return;
 
-        // Only host can reset
         const host = room.players.find(p => p.id === socket.id);
         if (!host?.isHost) { socket.emit('error', 'Yalnız host yenidən başlada bilər!'); return; }
 
-        // Clear discussion timer if active
         if (discussionTimers[roomCode]?.timer) {
             clearTimeout(discussionTimers[roomCode].timer);
             delete discussionTimers[roomCode];
         }
 
-        // Reset room state but KEEP players and roomCode
         room.gameState = 'lobby';
         room.currentWord = '';
+        room.currentWordObj = null;
         room.currentCategory = '';
         room.votes = {};
         room.discussionOrder = [];
@@ -529,16 +658,16 @@ io.on('connection', (socket) => {
             p.votes = 0;
         });
 
-        // Broadcast to all: go back to lobby
         io.to(roomCode).emit('game_reset', {
             gameState: 'lobby',
             players: room.players
         });
 
-        console.log(`[RESET] ${roomCode} reset by host. Players kept: ${room.players.map(p => p.name).join(', ')}`);
+        broadcastGlobalRooms();
+        console.log(`[RESET] ${roomCode} reset by host. Players: ${room.players.map(p => p.name).join(', ')}`);
     });
 
-    // ── Leave Room ───────────────────────────────────────────────────────────
+    // ── Leave Room ────────────────────────────────────────────────────────────
     socket.on('leave_room', ({ roomCode }) => {
         const room = rooms[roomCode];
         if (!room) return;
@@ -547,35 +676,35 @@ io.on('connection', (socket) => {
         socket.leave(roomCode);
 
         if (room.players.length === 0) {
-            // Cleanup empty room
             if (discussionTimers[roomCode]?.timer) clearTimeout(discussionTimers[roomCode].timer);
             delete discussionTimers[roomCode];
             delete rooms[roomCode];
         } else {
-            // Reassign host if needed
             if (!room.players.some(p => p.isHost)) room.players[0].isHost = true;
             io.to(roomCode).emit('update_players', room.players);
         }
+
+        broadcastGlobalRooms();
     });
 
-    // ── Chat ─────────────────────────────────────────────────────────────────
+    // ── Chat ──────────────────────────────────────────────────────────────────
     socket.on('send_message', ({ roomCode, playerName, text }) => {
         const room = rooms[roomCode];
         if (!room) return;
         io.to(roomCode).emit('receive_message', { playerName, text, timestamp: Date.now() });
     });
 
-    // ── Return to Lobby ──────────────────────────────────────────────────────
+    // ── Return to Lobby ───────────────────────────────────────────────────────
     socket.on('return_to_lobby', ({ roomCode }) => {
         const room = rooms[roomCode];
         if (!room) return;
 
-        // Only host can reset
         const host = room.players.find(p => p.id === socket.id);
         if (!host?.isHost) { socket.emit('error', 'Yalnız host lobbyə qayıda bilər!'); return; }
 
         room.gameState = 'lobby';
         room.currentWord = '';
+        room.currentWordObj = null;
         room.currentCategory = '';
         room.votes = {};
         room.discussionOrder = [];
@@ -585,14 +714,57 @@ io.on('connection', (socket) => {
         delete discussionTimers[roomCode];
 
         io.to(roomCode).emit('game_reset', { gameState: 'lobby', players: room.players });
+
+        broadcastGlobalRooms();
         console.log(`[RESET] ${roomCode} returned to lobby`);
     });
 
-    // ── Disconnect ───────────────────────────────────────────────────────────
+    // ── Disconnect ────────────────────────────────────────────────────────────
     socket.on('disconnect', () => {
         console.log(`[DISCONNECT] ${socket.id}`);
 
-        // Grace period: 15s before removing player (allows reconnect via rejoin_room)
+        // Oyun fazasında dərhal update et (ghost player önlə)
+        for (const code in rooms) {
+            const room = rooms[code];
+            const player = room.players.find(p => p.id === socket.id);
+            if (!player) continue;
+
+            const activeGameStates = ['playing', 'discussion', 'voting', 'discussion_ended'];
+            if (activeGameStates.includes(room.gameState)) {
+                // Aktiv oyunda: dərhal update göndər (grace period yoxdur)
+                console.log(`[DISCONNECT] ${player.name} oyun zamanı ayrıldı (${code})`);
+
+                // Discussion order-dan çıxar
+                room.discussionOrder = room.discussionOrder.filter(id => id !== socket.id);
+
+                // Həmin oyunçunun votunu sil
+                delete room.votes[socket.id];
+
+                io.to(code).emit('player_left', {
+                    name: player.name,
+                    wasHost: player.isHost,
+                    newHostName: null,
+                    message: `${player.name} oyundan ayrıldı.`
+                });
+
+                // Əgər aktiv voting varsa, vote sayını yenidən yoxla
+                const alivePlayers = room.players.filter(p => p.isAlive && p.id !== socket.id);
+                const votedCount = Object.keys(room.votes).length;
+                if (room.gameState === 'voting' && votedCount >= alivePlayers.length && alivePlayers.length > 0) {
+                    // Bütün qalan oyunçular səs verib — bu socket ayrılandan sonra
+                    // vote tamamlandı sayılır amma oyunçu artıq yoxdur
+                    // yenidən vote_update emit et
+                    io.to(code).emit('vote_update', {
+                        votes: room.votes,
+                        votedCount,
+                        totalVoters: alivePlayers.length
+                    });
+                }
+            }
+            break;
+        }
+
+        // 15 saniiyəlik grace period: reconnect imkanı ver
         setTimeout(() => {
             for (const code in rooms) {
                 const room = rooms[code];
@@ -602,46 +774,64 @@ io.on('connection', (socket) => {
                 const leavingPlayer = room.players[idx];
                 const wasHost = leavingPlayer.isHost;
 
-                // Remove player from room
                 room.players.splice(idx, 1);
 
-                // ── Empty room: clean up ──────────────────────────────────────
                 if (room.players.length === 0) {
                     if (discussionTimers[code]?.timer) clearTimeout(discussionTimers[code].timer);
                     delete discussionTimers[code];
                     delete rooms[code];
-                    console.log(`[ROOM] ${code} deleted (empty)`);
+                    console.log(`[ROOM] ${code} silindi (boş)`);
+                    broadcastGlobalRooms();
                     break;
                 }
 
-                // ── Host Migration ────────────────────────────────────────────
                 if (wasHost) {
-                    // Promote the first remaining player to host
                     const newHost = room.players[0];
                     newHost.isHost = true;
-
-                    // Notify the new host specifically
                     io.to(newHost.id).emit('host_migrated', {
                         message: `${leavingPlayer.name} ayrıldı. Siz yeni host oldunuz! 👑`,
                         players: room.players
                     });
-
-                    console.log(`[HOST] ${code}: ${leavingPlayer.name} left → ${newHost.name} is new host`);
+                    console.log(`[HOST] ${code}: ${leavingPlayer.name} ayrıldı → ${newHost.name} yeni host`);
                 }
 
-                // Notify all remaining players
                 io.to(code).emit('update_players', room.players);
-                io.to(code).emit('player_left', {
-                    name: leavingPlayer.name,
-                    wasHost,
-                    newHostName: wasHost ? room.players[0]?.name : null
-                });
 
+                // Oyun fazasında alive win condition yenidən yoxla
+                const activeGameStates = ['playing', 'discussion', 'voting'];
+                if (activeGameStates.includes(room.gameState)) {
+                    const winCheck = checkWinCondition(room);
+                    if (winCheck.over) {
+                        room.gameState = 'result';
+                        io.to(code).emit('game_over', {
+                            winner: winCheck.winner,
+                            reason: winCheck.reason + ` (${leavingPlayer.name} ayrıldı)`,
+                            word: room.currentWord,
+                            imposters: room.players.filter(p => p.isImposter).map(p => p.name)
+                        });
+                    }
+                }
+
+                broadcastGlobalRooms();
                 break;
             }
-        }, 15000); // 15 second grace period for reconnection
+        }, 15000);
     });
 });
+
+// ─── Qlobal Otaq Yayımı ────────────────────────────────────────────────────────
+function broadcastGlobalRooms() {
+    const publicRooms = Object.values(rooms)
+        .filter(r => !r.isPrivate && r.gameState === 'lobby')
+        .map(r => ({
+            roomCode: r.id,
+            roomName: r.roomName || r.id,
+            playerCount: r.players.length,
+            hostName: r.players.find(p => p.isHost)?.name || '?',
+            region: r.region || 'Global'
+        }));
+    io.emit('global_rooms', publicRooms);
+}
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => console.log(`[SERVER] Running on port ${PORT}`));

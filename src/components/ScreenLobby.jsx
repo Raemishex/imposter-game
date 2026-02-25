@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import useGameStore from '../store/useGameStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
     User, Copy, Play, Plus, Settings, HelpCircle, 
-    Share2, Star, Moon, Sun, ChevronRight, Check,
+    Share2, Star, ChevronRight, Check,
     LogOut, AlertCircle, History, Palette, Volume2, VolumeX, Users,
-    Instagram, Github, Heart, Clock, Wifi 
+    Instagram, Github, Heart, Clock, Wifi, Globe, Lock, RefreshCw
 } from 'lucide-react';
 import { CATEGORIES } from '../data';
 import { UI_TEXTS } from '../translations';
@@ -24,7 +24,9 @@ const ScreenLobby = () => {
         addLocalPlayer, theme, setTheme, history, 
         isConnected,
         language, setLanguage,
-        toastMessage
+        toastMessage,
+        isSecretAdmin, activateSecretAdmin,
+        globalRooms, fetchGlobalRooms
     } = useGameStore();
 
     const [selectedCats, setSelectedCats] = useState([CATEGORIES[0].id]);
@@ -39,11 +41,23 @@ const ScreenLobby = () => {
     const [imposterSquad, setImposterSquad] = useState(false);
     const [includeJester, setIncludeJester] = useState(false);
     const [chaosMode, setChaosMode] = useState(false);
-    const [devModeClicks, setDevModeClicks] = useState(0);
-    const [showDevMode, setShowDevMode] = useState(false);
     const [showSocialModal, setShowSocialModal] = useState(false);
     const [historyModal, setHistoryModal] = useState(false);
-    
+    // Gizli admin modal
+    const [devModeClicks, setDevModeClicks] = useState(0);
+    const devClickTimer = useRef(null);
+    const [showAdminModal, setShowAdminModal] = useState(false);
+    const [adminPasswordInput, setAdminPasswordInput] = useState('');
+    const [adminError, setAdminError] = useState('');
+    // Otaq tipi
+    const [isPrivateRoom, setIsPrivateRoom] = useState(false);
+    const [roomPassword, setRoomPassword] = useState('');
+    const [roomDisplayName, setRoomDisplayName] = useState(''); // açıq otaq adı
+    const [selectedRegion, setSelectedRegion] = useState('Global'); // otaq regionı
+    const [showGlobalRooms, setShowGlobalRooms] = useState(false);
+    const [regionFilter, setRegionFilter] = useState('Global'); // qlobal filter
+    const REGIONS = ['Global', 'AZ', 'EU', 'RU', 'US'];
+
     // Modals
     const [showHelp, setShowHelp] = useState(false);
     const [showHistory, setShowHistory] = useState(false);
@@ -104,12 +118,30 @@ const ScreenLobby = () => {
         setTimeout(() => setShowToast(false), 2000);
     };
 
+    // Gizli admin modu: logo-ya 5 dəfə sürətli klik
     const handleDevClick = () => {
-        if (devModeClicks + 1 >= 5) {
-            setShowDevMode(!showDevMode);
+        const newCount = devModeClicks + 1;
+        setDevModeClicks(newCount);
+        // Əvvəlki timer-i ləğv et
+        if (devClickTimer.current) clearTimeout(devClickTimer.current);
+        if (newCount >= 5) {
             setDevModeClicks(0);
+            setShowAdminModal(true);
+            setAdminPasswordInput('');
+            setAdminError('');
         } else {
-            setDevModeClicks(devModeClicks + 1);
+            // 2 saniyə ərzində 5 klik olmasa sıfırla
+            devClickTimer.current = setTimeout(() => setDevModeClicks(0), 2000);
+        }
+    };
+
+    const handleAdminSubmit = () => {
+        const ok = activateSecretAdmin(adminPasswordInput);
+        if (ok) {
+            setShowAdminModal(false);
+            setAdminPasswordInput('');
+        } else {
+            setAdminError('Yanlış şifrə! Yenidən cəhd et.');
         }
     };
 
@@ -136,8 +168,7 @@ const ScreenLobby = () => {
         playClick();
         if (!onlineName.trim()) return;
         localStorage.setItem('playerName', onlineName);
-        console.log('Creating room for', onlineName);
-        createRoom(onlineName);
+        createRoom(onlineName, isPrivateRoom, roomDisplayName, '', selectedRegion);
     };
 
     const handleJoinRoom = () => {
@@ -150,9 +181,20 @@ const ScreenLobby = () => {
     const handleStart = () => {
         playClick();
         const selectedCategoryObjects = CATEGORIES.filter(c => selectedCats.includes(c.id));
-        // Use words from the selected language
-        const allWords = selectedCategoryObjects.flatMap(c => c.words[language] || c.words['az']);
-        const uniqueWords = [...new Set(allWords)];
+        
+        // KRİTİK: wordObjects = [{word, category}] formatında hazırla
+        const wordObjects = selectedCategoryObjects.flatMap(cat => {
+            const categoryName = cat.name[language] || cat.name['az'];
+            const words = cat.words[language] || cat.words['az'] || [];
+            return words.map(w => ({ word: w, category: categoryName }));
+        });
+        // Unikal sözlər (eyni söz fərqli kateqoriyalarda ola bilməz)
+        const seen = new Set();
+        const uniqueWordObjects = wordObjects.filter(wo => {
+            if (seen.has(wo.word)) return false;
+            seen.add(wo.word);
+            return true;
+        });
 
         const settings = {
             trollMode,
@@ -165,9 +207,9 @@ const ScreenLobby = () => {
         };
 
         if (mode === 'local') {
-            startLocalGame(selectedCats, uniqueWords, settings);
+            startLocalGame(selectedCats, uniqueWordObjects, settings);
         } else {
-            startGame(selectedCats, uniqueWords, settings);
+            startGame(selectedCats, uniqueWordObjects, settings);
         }
     };
 
@@ -437,6 +479,48 @@ const ScreenLobby = () => {
                 )}
             </AnimatePresence>
 
+            {/* Gizli Admin Şifrə Modalı */}
+            <AnimatePresence>
+                {showAdminModal && (
+                    <motion.div
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
+                        onClick={() => setShowAdminModal(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.8, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.8, y: 20 }}
+                            className="bg-zinc-900 border border-red-800 p-8 rounded-3xl max-w-xs w-full shadow-2xl"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <div className="text-center space-y-4">
+                                <div className="text-4xl">🔐</div>
+                                <h2 className="text-xl font-black text-white">Admin Girişi</h2>
+                                <input
+                                    type="password"
+                                    value={adminPasswordInput}
+                                    onChange={e => { setAdminPasswordInput(e.target.value); setAdminError(''); }}
+                                    onKeyDown={e => e.key === 'Enter' && handleAdminSubmit()}
+                                    placeholder="Şifrəni daxil et..."
+                                    autoFocus
+                                    className="w-full bg-zinc-800 border border-zinc-600 p-3 rounded-xl text-white font-mono outline-none focus:border-red-500 transition-colors"
+                                />
+                                {adminError && <p className="text-red-400 text-xs">{adminError}</p>}
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => setShowAdminModal(false)}
+                                        className="flex-1 py-2 rounded-xl bg-zinc-700 text-white font-bold"
+                                    >İmtina</button>
+                                    <button
+                                        onClick={handleAdminSubmit}
+                                        className="flex-1 py-2 rounded-xl bg-red-700 hover:bg-red-600 text-white font-bold transition-colors"
+                                    >Daxil ol</button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* Header */}
             <div className="flex justify-between items-center p-4 pt-8">
                 <button className="icon-btn" onClick={() => { playClick(); setShowSettings(true); }}><Settings className="w-6 h-6" /></button>
@@ -480,14 +564,16 @@ const ScreenLobby = () => {
                 </div>
             </div>
             
-            {showDevMode && (
-                <div className="bg-black/80 text-green-400 p-2 text-xs font-mono m-2 rounded overflow-hidden">
-                    <p>DEBUG MODE</p>
-                    <p>Code: {roomCode}</p>
-                    <p>Host: {isHost ? 'YES' : 'NO'}</p>
-                    <p>Me: {currentPlayer?.name}</p>
-                    <p>Troll: {trollMode ? 'ON' : 'OFF'}</p>
-                </div>
+            {/* Gizli Admin Modu: aktiv olduqda kiçik badge */}
+            {isSecretAdmin && (
+                <motion.div 
+                    initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+                    className="mx-4 mb-1 bg-red-900/80 border border-red-500 text-red-300 px-3 py-2 rounded-xl text-xs font-mono flex items-center gap-2"
+                >
+                    <span className="text-red-400">👁</span>
+                    Admin Modu Aktiv — İmposterlar qırmızı görünür
+                    <button onClick={() => useGameStore.getState().deactivateSecretAdmin()} className="ml-auto text-red-400 hover:text-white">✕</button>
+                </motion.div>
             )}
 
             <div className="flex flex-col gap-4 p-4 max-w-md mx-auto w-full">
@@ -525,7 +611,7 @@ const ScreenLobby = () => {
                         : t.onlineDesc}
                 </p>
 
-                {/* ONLINE CONNECT FORM (Only if Online and NOT connected) */}
+                {/* ONLINE CONNECT FORM */}
                 {mode === 'online' && !isOnlineConnected && (
                     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
                         <div className="card-base space-y-4 p-6">
@@ -534,10 +620,51 @@ const ScreenLobby = () => {
                                 <input 
                                     value={onlineName}
                                     onChange={(e) => setOnlineName(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleCreateRoom()}
                                     placeholder={t.enterName}
                                     className="w-full bg-[var(--bg-primary)] p-3 rounded-xl font-bold text-[var(--text-primary)] border border-[var(--border-color)] focus:border-[var(--accent-color)] outline-none transition-colors focus:ring-2 ring-[var(--accent-color)]/20"
                                 />
                             </div>
+
+                            {/* Otaq tipi: Açıq / Özəl */}
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    onClick={() => { playClick(); setIsPrivateRoom(false); }}
+                                    className={`py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 border transition-all ${!isPrivateRoom ? 'bg-[var(--accent-color)] text-black border-transparent' : 'border-[var(--border-color)] text-[var(--text-secondary)]'}`}
+                                >
+                                    <Globe className="w-4 h-4" /> {t.openRoom || 'Açıq'}
+                                </button>
+                                <button
+                                    onClick={() => { playClick(); setIsPrivateRoom(true); }}
+                                    className={`py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 border transition-all ${isPrivateRoom ? 'bg-[var(--accent-color)] text-black border-transparent' : 'border-[var(--border-color)] text-[var(--text-secondary)]'}`}
+                                >
+                                    <Lock className="w-4 h-4" /> {t.privateRoom || 'Özəl'}
+                                </button>
+                            </div>
+
+                            {/* Açıq otaq: ad + region */}
+                            {!isPrivateRoom && (
+                                <div className="space-y-2">
+                                    <input
+                                        value={roomDisplayName}
+                                        onChange={e => setRoomDisplayName(e.target.value)}
+                                        onKeyDown={e => e.key === 'Enter' && handleCreateRoom()}
+                                        placeholder={t.roomNamePlaceholder || 'Otaq adı (isteğe bağlı)'}
+                                        maxLength={20}
+                                        className="w-full bg-[var(--bg-primary)] p-3 rounded-xl font-bold text-[var(--text-primary)] border border-[var(--border-color)] focus:border-[var(--accent-color)] outline-none transition-colors"
+                                    />
+                                    <div className="flex gap-2">
+                                        {['Global','AZ','EU','RU','US'].map(r => (
+                                            <button key={r}
+                                                onClick={() => { playClick(); setSelectedRegion(r); }}
+                                                className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedRegion === r ? 'bg-[var(--accent-color)] text-black border-transparent' : 'border-[var(--border-color)] text-[var(--text-secondary)]'}`}
+                                            >{r}</button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+
                             
                             <div className="grid grid-cols-2 gap-3 pt-2">
                                 <button 
@@ -552,8 +679,9 @@ const ScreenLobby = () => {
                                     <input 
                                         value={joinCode}
                                         onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                                        placeholder="KOD"
-                                        maxLength={4}
+                                        onKeyDown={e => e.key === 'Enter' && handleJoinRoom()}
+                                        placeholder={t.roomCode || 'Otaq kodu'}
+                                        maxLength={20}
                                         className="w-full bg-[var(--bg-primary)] p-3 rounded-xl font-black text-center text-[var(--text-primary)] border border-[var(--border-color)] focus:border-[var(--accent-color)] outline-none transition-colors uppercase tracking-widest focus:ring-2 ring-[var(--accent-color)]/20"
                                     />
                                     <button 
@@ -565,8 +693,64 @@ const ScreenLobby = () => {
                                     </button>
                                 </div>
                             </div>
+
+                            {/* Qlobal Açıq Otaqlar */}
+                            <div className="border-t border-[var(--border-color)] pt-3">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <button
+                                        onClick={() => { playClick(); setShowGlobalRooms(!showGlobalRooms); if (!showGlobalRooms) fetchGlobalRooms(regionFilter !== 'Global' ? regionFilter : undefined); }}
+                                        className="flex-1 flex items-center justify-between text-sm font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors py-1"
+                                    >
+                                        <span className="flex items-center gap-2"><Globe className="w-4 h-4" /> {t.openRoom || 'Açıq Otaqlar'} ({globalRooms.length})</span>
+                                        <RefreshCw className={`w-4 h-4 transition-transform ${showGlobalRooms ? 'rotate-180' : ''}`} />
+                                    </button>
+                                    <button onClick={() => { fetchGlobalRooms(regionFilter !== 'Global' ? regionFilter : undefined); }} className="p-1.5 bg-[var(--bg-primary)] rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)]">
+                                        <RefreshCw className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
+
+                                {/* Region Filter */}
+                                {showGlobalRooms && (
+                                    <div className="flex gap-1.5 mb-2">
+                                        {['Global','AZ','EU','RU','US'].map(r => (
+                                            <button key={r}
+                                                onClick={() => { setRegionFilter(r); fetchGlobalRooms(r !== 'Global' ? r : undefined); }}
+                                                className={`flex-1 py-1 rounded-lg text-[10px] font-bold border transition-all ${regionFilter === r ? 'bg-[var(--accent-color)] text-black border-transparent' : 'border-[var(--border-color)] text-[var(--text-secondary)]'}`}
+                                            >{r}</button>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <AnimatePresence>
+                                    {showGlobalRooms && (
+                                        <motion.div
+                                            initial={{ height: 0, opacity: 0 }}
+                                            animate={{ height: 'auto', opacity: 1 }}
+                                            exit={{ height: 0, opacity: 0 }}
+                                            className="overflow-hidden space-y-2"
+                                        >
+                                            {globalRooms.length === 0 ? (
+                                                <p className="text-center text-xs text-[var(--text-secondary)] py-3">Açıq otaq tapılmadı</p>
+                                            ) : globalRooms.map(r => (
+                                                <div key={r.roomCode} className="flex items-center justify-between bg-[var(--bg-primary)] p-3 rounded-xl border border-[var(--border-color)]">
+                                                    <div>
+                                                        <p className="font-black text-[var(--text-primary)] tracking-wide text-sm">{r.roomName || r.roomCode}</p>
+                                                        <p className="text-xs text-[var(--text-secondary)]">{r.hostName} · {r.playerCount} oyunçu · {r.region}</p>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => { playClick(); setJoinCode(r.roomCode); }}
+                                                        className="btn-primary px-3 py-1 text-xs rounded-lg active:scale-95"
+                                                    >
+                                                        Qoşul
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </div>
                             
-                             {error && (
+                            {error && (
                                 <p className="text-red-500 text-xs font-bold text-center flex items-center justify-center gap-1 animate-pulse">
                                     <AlertCircle className="w-3 h-3" /> {error}
                                 </p>
@@ -721,12 +905,12 @@ const ScreenLobby = () => {
                                 <div className="flex items-center justify-between">
                                     <div className="flex flex-col">
                                         <span className="text-sm font-bold text-[var(--text-primary)] pl-7 relative">
-                                            <span className="absolute left-0 top-0.5">🎠</span> Jester Rolu
+                                            <span className="absolute left-0 top-0.5">🎭</span> {t.jesterRole}
                                         </span>
-                                        <span className="text-[10px] text-[var(--text-secondary)] pl-7 leading-tight max-w-[200px]">Jester atılsa, tək özü qazanır!</span>
+                                        <span className="text-[10px] text-[var(--text-secondary)] pl-7 leading-tight max-w-[200px]">{t.jesterRoleDesc}</span>
                                     </div>
                                     <button onClick={() => { playClick(); setIncludeJester(!includeJester); }} className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${includeJester ? 'bg-purple-500' : 'bg-[var(--border-color)]'}`}>
-                                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${includeJester ? 'left-6' : 'left-1'}`}></div>
+                                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${includeJester ? 'left-6' : 'left-1'}`} />
                                     </button>
                                 </div>
 
@@ -734,12 +918,12 @@ const ScreenLobby = () => {
                                 <div className="flex items-center justify-between">
                                     <div className="flex flex-col">
                                         <span className="text-sm font-bold text-[var(--text-primary)] pl-7 relative">
-                                            <span className="absolute left-0 top-0.5">🌀</span> Xaos Rejimi
+                                            <span className="absolute left-0 top-0.5">🌀</span> {t.chaosMode}
                                         </span>
-                                        <span className="text-[10px] text-[var(--text-secondary)] pl-7 leading-tight max-w-[200px]">Hər oyunda gözlənilməz hadisə baş verir!</span>
+                                        <span className="text-[10px] text-[var(--text-secondary)] pl-7 leading-tight max-w-[200px]">{t.chaosModeDesc}</span>
                                     </div>
                                     <button onClick={() => { playClick(); setChaosMode(!chaosMode); }} className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${chaosMode ? 'bg-orange-500' : 'bg-[var(--border-color)]'}`}>
-                                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${chaosMode ? 'left-6' : 'left-1'}`}></div>
+                                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${chaosMode ? 'left-6' : 'left-1'}`} />
                                     </button>
                                 </div>
                             </div>
@@ -794,7 +978,14 @@ const ScreenLobby = () => {
                         ) : (
                             <div className="w-full py-4 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-2xl text-center">
                                 <p className="text-[var(--text-secondary)] font-bold animate-pulse">
-                                    {t.waitingHost}
+                                    {
+                                        (() => {
+                                            const host = players.find(p => p.isHost);
+                                            return host && t.waitingHostName
+                                                ? t.waitingHostName(host.name)
+                                                : t.waitingHost;
+                                        })()
+                                    }
                                 </p>
                             </div>
                         )}

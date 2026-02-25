@@ -9,37 +9,38 @@ import useGameStore from './store/useGameStore';
 function App() {
   const { gameState } = useGameStore();
 
-  // Wake Lock Integration
+  // Wake Lock — yalnız oyun daxilindəyəndə aktiv (lobby-də yox)
   useEffect(() => {
     let wakeLock = null;
+    const isInGame = gameState !== 'lobby';
 
     const requestWakeLock = async () => {
       try {
-        if ('wakeLock' in navigator) {
+        if ('wakeLock' in navigator && isInGame) {
           wakeLock = await navigator.wakeLock.request('screen');
-          console.log('Wake Lock is active!');
         }
       } catch (err) {
-        console.error(`${err.name}, ${err.message}`);
+        // Sessiz xəta
       }
     };
 
-    // Request on load and whenever visibility changes (screen comes back on)
-    requestWakeLock();
-
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && isInGame) {
         requestWakeLock();
       }
     };
 
+    requestWakeLock();
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (wakeLock) wakeLock.release();
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+        wakeLock = null;
+      }
     };
-  }, []);
+  }, [gameState]);
 
   const theme = useGameStore((state) => state.theme);
 
@@ -63,7 +64,9 @@ function App() {
           case 'playing': 
           case 'local_reveal':
           case 'discussion':
-          case 'discussion_ended': return <ScreenGame key="game" />;
+          case 'discussion_ended':
+          // next_round: oyun davam edir, növbəti müzakirə/voting üçün ScreenGame-i göstər
+          case 'next_round': return <ScreenGame key="game" />;
           case 'voting': return <ScreenVote key="voting" />;
           case 'result': return <ScreenResult key="result" />;
           default: return <ScreenLobby key="default" />;

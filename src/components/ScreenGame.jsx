@@ -26,7 +26,16 @@ const ScreenGame = () => {
         // Advanced features
         role, chaosEvent,
         // Ready system
-        playerReady, readyUpdate
+        playerReady, readyUpdate,
+        // Admin mode
+        isSecretAdmin,
+        // Imposter kateqoriya (serverdən gələn)
+        imposterCategory,
+        // Next round info
+        nextRoundInfo,
+        // Phase 3: Admin Cheats
+        spyWord,
+        adminPlayerIds
     } = useGameStore();
 
     const t = UI_TEXTS[language] || UI_TEXTS['az'];
@@ -69,12 +78,16 @@ const ScreenGame = () => {
     const categoryObj = CATEGORIES.find(c => c.id === currentCategory);
     const categoryName = categoryObj?.name?.[language] || currentCategory || 'Naməlum';
 
+    // imposter üçün görünən kateqoriya (server tərəfindən göndərilir)
+    const imposterDisplayCategory = imposterCategory || currentCategory || '?';
+
     // ─── Ordered players for local mode ───────────────────────────────────────
     const orderedPlayers = (() => {
-        if (!players.length) return [];
-        const startIdx = players.findIndex(p => p.id === startingPlayerId);
-        if (startIdx === -1) return [...players];
-        return [...players.slice(startIdx), ...players.slice(0, startIdx)];
+        const alivePlayers = (players || []).filter(p => p.isAlive);
+        if (!alivePlayers.length) return [];
+        const startIdx = alivePlayers.findIndex(p => p.id === startingPlayerId);
+        if (startIdx === -1) return [...alivePlayers];
+        return [...alivePlayers.slice(startIdx), ...alivePlayers.slice(0, startIdx)];
     })();
 
     // ─── Sound on timer tick (online mode) ────────────────────────────────────
@@ -190,21 +203,22 @@ const ScreenGame = () => {
                                     <p className="text-[var(--text-secondary)] text-lg font-bold">{t.tapToReveal}</p>
                                 </div>
                             )}
-                            <div className="w-full max-w-sm aspect-[3/4] relative perspective-1000 cursor-pointer"
+                            <div className="w-full max-w-sm aspect-[3/4] relative cursor-pointer"
+                                style={{ perspective: '1000px' }}
                                 onTouchStart={() => setIsHolding(true)} onTouchEnd={() => setIsHolding(false)}
                                 onMouseDown={() => setIsHolding(true)} onMouseUp={() => setIsHolding(false)} onMouseLeave={() => setIsHolding(false)}
                             >
-                                <motion.div className="w-full h-full relative transform-style-3d transition-all duration-300" animate={{ rotateY: isHolding ? 180 : 0 }}>
-                                    <div className="absolute inset-0 backface-hidden rounded-3xl bg-[var(--bg-card)] border-2 border-[var(--border-color)] flex items-center justify-center shadow-xl">
+                                <motion.div className="w-full h-full relative" style={{ transformStyle: 'preserve-3d' }} animate={{ rotateY: isHolding ? 180 : 0 }} transition={{ duration: 0.3 }}>
+                                    <div className="absolute inset-0 rounded-3xl bg-[var(--bg-card)] border-2 border-[var(--border-color)] flex items-center justify-center shadow-xl" style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
                                         <div className="text-6xl font-black text-[var(--text-primary)]/10">?</div>
                                     </div>
-                                    <div className={`absolute inset-0 backface-hidden rotate-y-180 rounded-3xl p-6 flex flex-col items-center justify-center text-center border-4 ${
+                                    <div className={`absolute inset-0 rounded-3xl p-6 flex flex-col items-center justify-center text-center border-4 ${
                                         isCurrentPlayerJester
                                             ? 'bg-purple-500/10 border-purple-500/50'
                                             : isCurrentPlayerImposter
                                                 ? 'bg-red-500/10 border-red-500/50'
                                                 : 'bg-green-500/10 border-green-500/50'
-                                    }`}>
+                                    }`} style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }} initial={{ rotateY: 180 }} animate={{ rotateY: 180 }} transition={{ duration: 0 }}>
                                         {isCurrentPlayerJester ? (
                                             <>
                                                 <span className="text-6xl mb-4">🎠</span>
@@ -290,6 +304,13 @@ const ScreenGame = () => {
                     </button>
                 </div>
 
+                {/* Spectator Mode Banner */}
+                {currentPlayer?.isAlive === false && (
+                    <div className="mx-4 mb-2 bg-red-500/90 text-white rounded-xl py-2 px-4 shadow-lg text-center font-bold text-sm border border-red-700 relative z-50">
+                        💀 Eliminasiya olundun — İzləmə rejimi
+                    </div>
+                )}
+
                 {/* Chaos Event Banner */}
                 {chaosEvent && (
                     <div className={`mx-4 mb-2 px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-bold ${
@@ -321,18 +342,44 @@ const ScreenGame = () => {
                         </svg>
                         <div className="absolute inset-0 flex flex-col items-center justify-center">
                             <Clock className={`w-4 h-4 mb-0.5 ${timerTextColor}`} />
-                            <span className={`text-xl font-black font-mono ${timerTextColor} ${turnData.timeLeft <= 10 ? 'animate-pulse' : ''}`}>
+                            <motion.span
+                                className={`text-xl font-black font-mono ${timerTextColor}`}
+                                animate={turnData.timeLeft <= 10 ? {
+                                    scale: [1, 1.25, 1],
+                                    opacity: [1, 0.7, 1]
+                                } : {}}
+                                transition={turnData.timeLeft <= 10 ? {
+                                    duration: 0.6,
+                                    repeat: Infinity,
+                                    ease: 'easeInOut'
+                                } : {}}
+                            >
                                 {turnData.timeLeft}
-                            </span>
+                            </motion.span>
                         </div>
                     </div>
                 </div>
 
-                {/* Current Player */}
+                {/* Current Player — floating highlight */}
                 <div className="text-center px-6 pb-3">
                     <p className="text-xs text-[var(--text-secondary)] mb-1 uppercase tracking-wider">Sıra:</p>
-                    <motion.h2 key={turnData.currentPlayerName} initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                        className="text-3xl font-black text-[var(--text-primary)]">
+                    <motion.h2
+                        key={turnData.currentPlayerName}
+                        initial={{ scale: 0.8, opacity: 0 }}
+                        animate={{
+                            scale: 1,
+                            opacity: 1,
+                            y: [-5, 5, -5]
+                        }}
+                        transition={{
+                            scale: { duration: 0.3 },
+                            y: { duration: 2, repeat: Infinity, ease: 'easeInOut' }
+                        }}
+                        className="text-3xl font-black text-[var(--text-primary)]"
+                        style={{
+                            textShadow: turnData.isMyTurn ? '0 0 20px rgba(var(--accent-rgb,59,130,246),0.5)' : 'none'
+                        }}
+                    >
                         {turnData.currentPlayerName}
                         {turnData.isMyTurn && <span className="ml-2 text-[var(--accent-color)] text-lg">← Sən!</span>}
                     </motion.h2>
@@ -494,6 +541,75 @@ const ScreenGame = () => {
         );
     }
 
+    // ─── NEXT ROUND OVERLAY ───────────────────────────────────────────────────
+    if (gameState === 'next_round' && nextRoundInfo) {
+        return (
+            <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[var(--bg-primary)] relative">
+                <motion.div
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="w-full max-w-sm space-y-6 text-center"
+                >
+                    <div className="text-6xl">{nextRoundInfo.wasImposter ? '🎯' : '❌'}</div>
+                    <div className="space-y-2">
+                        <h2 className="text-3xl font-black text-[var(--text-primary)]">
+                            {nextRoundInfo.eliminatedName} eliminasiya edildi!
+                        </h2>
+                        <p className={`font-bold text-lg ${
+                            nextRoundInfo.wasImposter ? 'text-green-400' : 'text-red-400'
+                        }`}>
+                            {nextRoundInfo.message}
+                        </p>
+                    </div>
+
+                    {/* Sağ qalan oyunçular */}
+                    <div className="bg-[var(--bg-card)] rounded-2xl p-4 border border-[var(--border-color)]">
+                        <p className="text-xs text-[var(--text-secondary)] uppercase tracking-wider mb-3">
+                            Sağ qalan oyunçular ({nextRoundInfo.alivePlayers?.length || 0})
+                        </p>
+                        <div className="flex flex-wrap gap-2 justify-center">
+                            {(nextRoundInfo.alivePlayers || []).map(p => (
+                                <span key={p.id} className={`px-3 py-1.5 rounded-full text-sm font-bold border ${
+                                    isSecretAdmin && p.isImposter
+                                        ? 'bg-red-500/20 text-red-400 border-red-500/50'
+                                        : 'bg-[var(--bg-primary)] text-[var(--text-primary)] border-[var(--border-color)]'
+                                }`}>
+                                    {isSecretAdmin && p.isImposter && <span className="mr-1">🔴</span>}
+                                    {adminPlayerIds && adminPlayerIds.includes(p.id) && <span className="mr-1 text-yellow-400" title="Admin">👁️</span>}
+                                    {p.name}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Host: müzakirəni yenidən başlat */}
+                    {currentPlayer?.isHost ? (
+                        <motion.button
+                            animate={{ boxShadow: ['0 0 0px rgba(34,197,94,0)', '0 0 20px rgba(34,197,94,0.5)', '0 0 0px rgba(34,197,94,0)'] }}
+                            transition={{ duration: 2, repeat: Infinity }}
+                            onClick={() => {
+                                if (mode === 'online') {
+                                    useGameStore.getState().socket?.emit('start_discussion', { roomCode: useGameStore.getState().roomCode });
+                                } else {
+                                    useGameStore.setState({ gameState: 'discussion' });
+                                    handleStartLocalDiscussion();
+                                }
+                            }}
+                            className="w-full py-4 bg-[var(--accent-color)] text-white rounded-2xl font-black text-lg flex items-center justify-center gap-2 active:scale-95 transition-all"
+                        >
+                            🗣️ Yeni Müzakirə Başlat
+                        </motion.button>
+                    ) : (
+                        <div className="py-4 rounded-2xl border border-[var(--border-color)] text-[var(--text-secondary)] font-bold animate-pulse">
+                            ⏳ Host yeni müzakirə başlatmasını gözləyin...
+                        </div>
+                    )}
+                </motion.div>
+                <Chat />
+            </div>
+        );
+    }
+
     // ─── CARD REVEAL PHASE (playing state) ────────────────────────────────────
     const starterPlayer = players.find(p => p.id === startingPlayerId);
     const onlineOtherImposters = (isImposter && showSquad)
@@ -518,19 +634,66 @@ const ScreenGame = () => {
                         <Fingerprint className="w-12 h-12 mx-auto text-[var(--accent-color)] animate-pulse mt-4" />
                     </motion.div>
 
-                    <div className="w-full max-w-sm aspect-[3/4] relative perspective-1000 cursor-pointer"
-                        onTouchStart={() => setIsHolding(true)} onTouchEnd={() => setIsHolding(false)}
-                        onMouseDown={() => setIsHolding(true)} onMouseUp={() => setIsHolding(false)} onMouseLeave={() => setIsHolding(false)}
+                    <div className="w-full max-w-sm aspect-[3/4] relative cursor-pointer"
+                        style={{ perspective: '1000px' }}
+                        onTouchStart={() => { setIsHolding(true); if (!hasSeenCard) setHasSeenCard(true); }}
+                        onTouchEnd={() => setIsHolding(false)}
+                        onMouseDown={() => { setIsHolding(true); if (!hasSeenCard) setHasSeenCard(true); }}
+                        onMouseUp={() => setIsHolding(false)} onMouseLeave={() => setIsHolding(false)}
                     >
-                        <motion.div className="w-full h-full relative transform-style-3d transition-all duration-500 ease-out" animate={{ rotateY: isHolding ? 180 : 0 }}>
-                            <div className="absolute inset-0 backface-hidden rounded-3xl bg-gradient-to-br from-gray-800 to-black border border-white/10 shadow-2xl flex flex-col items-center justify-center">
-                                <EyeOff className="w-20 h-20 text-white/20" />
-                            </div>
-                            <div className={`absolute inset-0 backface-hidden rotate-y-180 rounded-3xl shadow-2xl flex flex-col items-center justify-center p-8 text-center border-4 ${
-                                role === 'jester' ? 'bg-gray-900 border-purple-500'
-                                : isImposter ? 'bg-gray-900 border-red-600'
-                                : 'bg-gray-900 border-green-500'
-                            }`}>
+                        {/* Card Flip 3D + Hold Shake */}
+                        <motion.div
+                            className="w-full h-full relative"
+                            style={{ transformStyle: 'preserve-3d' }}
+                            animate={{
+                                rotateY: isHolding ? 180 : 0,
+                                x: isHolding ? 0 : [-1.5, 1.5, -1.5, 1.5, 0],
+                            }}
+                            transition={{
+                                rotateY: { duration: 0.6, ease: [0.4, 0, 0.2, 1] },
+                                x: { duration: 0.4, repeat: isHolding ? 0 : Infinity, ease: 'linear' }
+                            }}
+                        >
+                            {/* Card Back — shake while not revealed */}
+                            <motion.div
+                                className="absolute inset-0 rounded-3xl bg-gradient-to-br from-gray-800 via-gray-900 to-black border border-white/10 shadow-2xl flex flex-col items-center justify-center"
+                                style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
+                                animate={{
+                                    boxShadow: !isHolding ? ['0 0 0px rgba(var(--accent-rgb,59,130,246),0)', '0 0 30px rgba(var(--accent-rgb,59,130,246),0.3)', '0 0 0px rgba(var(--accent-rgb,59,130,246),0)'] : 'none',
+                                    opacity: isHolding ? 0 : 1
+                                }}
+                                transition={{
+                                    boxShadow: { duration: 2, repeat: Infinity },
+                                    opacity: { duration: 0.15, delay: isHolding ? 0 : 0.2 }
+                                }}
+                            >
+                                <motion.div
+                                    animate={{ scale: [1, 1.1, 1], opacity: [0.15, 0.3, 0.15] }}
+                                    transition={{ duration: 2, repeat: Infinity }}
+                                >
+                                    <EyeOff className="w-20 h-20 text-white/20" />
+                                </motion.div>
+                            </motion.div>
+                            {/* Card Front — pop scale when flipped */}
+                            <motion.div
+                                className={`absolute inset-0 rounded-3xl shadow-2xl flex flex-col items-center justify-center p-8 text-center border-4 ${
+                                    role === 'jester' ? 'bg-gray-900 border-purple-500'
+                                    : isImposter ? 'bg-gray-900 border-red-600'
+                                    : 'bg-gray-900 border-green-500'
+                                }`}
+                                style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
+                                initial={{ rotateY: 180 }}
+                                animate={{ 
+                                    scale: isHolding ? [1.08, 1] : 1,
+                                    opacity: isHolding ? 1 : 0,
+                                    rotateY: 180
+                                }}
+                                transition={{ 
+                                    scale: { duration: 0.3, delay: 0.3 },
+                                    opacity: { duration: 0.15, delay: isHolding ? 0.2 : 0 },
+                                    rotateY: { duration: 0 }
+                                }}
+                            >
                                 {role === 'jester' ? (
                                     <div className="space-y-6">
                                         <span className="text-7xl">🎠</span>
@@ -552,7 +715,20 @@ const ScreenGame = () => {
                                             <h1 className="text-4xl font-black text-red-500 tracking-wider">İmposter</h1>
                                             <p className="text-red-300/80 mt-2 text-sm uppercase tracking-widest">{t.youAreImposter}</p>
                                         </div>
-                                        {imposterHint && <div className="p-4 bg-red-900/20 rounded-xl border border-red-500/20"><span className="text-xs text-red-400 uppercase">Mövzu</span><h3 className="text-xl font-bold text-white">{categoryName}</h3></div>}
+                                        {/* KRİTİK: İmposterə kateqoriyanı göstər (sözü yox!) */}
+                                        <div className="p-4 bg-red-900/20 rounded-xl border border-red-500/20">
+                                            <span className="text-xs text-red-400 uppercase">Kateqoriyan</span>
+                                            <h3 className="text-xl font-bold text-white">{imposterDisplayCategory}</h3>
+                                            <p className="text-xs text-red-300/60 mt-1">Sən sözü bilmirsən, yalnız kateqoriyanı bilirsin</p>
+                                        </div>
+                                        {/* Spy Word Cheat: Secret Admin imposter olduqda əsl sözü göstər */}
+                                        {spyWord && (
+                                            <div className="p-4 bg-yellow-900/30 rounded-xl border border-yellow-500/40 animate-pulse">
+                                                <span className="text-xs text-yellow-400 uppercase tracking-wider">🕵️ Spy Admin — Ǝsl Söz</span>
+                                                <h3 className="text-2xl font-black text-yellow-300 mt-1">{spyWord}</h3>
+                                                <p className="text-[10px] text-yellow-500/60 mt-1">Yalnız sən görürsən 🔥</p>
+                                            </div>
+                                        )}
                                         {onlineOtherImposters.length > 0 && <div className="p-3 bg-red-900/30 rounded-xl border border-red-500/30"><p className="text-xs text-red-300 uppercase mb-1">{t.otherImposters}</p><div className="flex flex-wrap justify-center gap-2">{onlineOtherImposters.map((n, i) => <span key={i} className="px-2 py-1 bg-red-500/20 rounded text-red-200 text-sm font-bold">{n}</span>)}</div></div>}
                                     </div>
                                 ) : (
@@ -569,7 +745,7 @@ const ScreenGame = () => {
                                         </div>
                                     </div>
                                 )}
-                            </div>
+                            </motion.div>
                         </motion.div>
                     </div>
 
@@ -745,25 +921,33 @@ const ExitModal = ({ isOpen, onClose, t, mode, currentPlayer, returnToLobby, lea
     </Modal>
 );
 
-const PlayerListModal = ({ isOpen, onClose, players, currentTurnIndex }) => (
-    <Modal isOpen={isOpen} onClose={onClose} title="Oyunçular">
-        <div className="grid grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1">
-            {players.map((p, i) => (
-                <div key={p.id} className={`flex items-center gap-2 p-2 rounded-lg border ${i === currentTurnIndex ? 'border-[var(--accent-color)] bg-[var(--accent-color)]/10' : 'border-[var(--border-color)] bg-[var(--bg-primary)]'}`}>
-                    <div className="w-8 h-8 rounded-full bg-[var(--accent-color)]/10 flex items-center justify-center text-[var(--accent-color)] font-bold text-sm">
-                        {p.name.charAt(0).toUpperCase()}
+const PlayerListModal = ({ isOpen, onClose, players, currentTurnIndex }) => {
+    const isSecretAdmin = useGameStore(s => s.isSecretAdmin);
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title="Oyunçular">
+            <div className="grid grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1">
+                {players.map((p, i) => (
+                    <div key={p.id} className={`flex items-center gap-2 p-2 rounded-lg border ${i === currentTurnIndex ? 'border-[var(--accent-color)] bg-[var(--accent-color)]/10' : 'border-[var(--border-color)] bg-[var(--bg-primary)]'}`}>
+                        <div className="w-8 h-8 rounded-full bg-[var(--accent-color)]/10 flex items-center justify-center text-[var(--accent-color)] font-bold text-sm">
+                            {p.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className={`text-sm font-medium truncate ${
+                            isSecretAdmin && p.isImposter ? 'text-red-400' : 'text-[var(--text-primary)]'
+                        }`}>
+                            {isSecretAdmin && p.isImposter && <span className="mr-1">🔴</span>}
+                            {p.name}
+                        </span>
+                        {i === currentTurnIndex && <span className="text-xs">🎤</span>}
+                        {i < currentTurnIndex && currentTurnIndex !== -1 && <span className="text-xs text-green-500">✓</span>}
+                        {p.isHost && <span className="text-xs text-yellow-500">👑</span>}
                     </div>
-                    <span className="text-sm font-medium truncate text-[var(--text-primary)]">{p.name}</span>
-                    {i === currentTurnIndex && <span className="text-xs">🎤</span>}
-                    {i < currentTurnIndex && currentTurnIndex !== -1 && <span className="text-xs text-green-500">✓</span>}
-                    {p.isHost && <span className="text-xs text-yellow-500">👑</span>}
-                </div>
-            ))}
-        </div>
-        <div className="mt-4">
-            <button onClick={onClose} className="btn-secondary w-full py-2">Bağla</button>
-        </div>
-    </Modal>
-);
+                ))}
+            </div>
+            <div className="mt-4">
+                <button onClick={onClose} className="btn-secondary w-full py-2">Bağla</button>
+            </div>
+        </Modal>
+    );
+};
 
 export default ScreenGame;
