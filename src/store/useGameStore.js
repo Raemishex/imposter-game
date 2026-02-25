@@ -106,8 +106,12 @@ const useGameStore = create(
 
             // ── Admin Modu ───────────────────────────────────────────────────
             activateSecretAdmin: (password) => {
-                const ADMIN_PASSWORD = 'ramazan2003';
-                if (password === ADMIN_PASSWORD) {
+                // Şifrə kodu github-da birbaşa görünməsin deyə base64 formatında saxlanılıb.
+                const encodedAdmin = 'cmFtYXphbjIwMDM=';
+                let isMatch = false;
+                try { isMatch = btoa(password) === encodedAdmin; } catch (e) { isMatch = false; }
+
+                if (isMatch) {
                     set({ isSecretAdmin: true });
                     // Server-ə de bildir ki, bu admin-dir (Admin Radar + Spy Word)
                     const { roomCode } = get();
