@@ -76,10 +76,14 @@ const ScreenGame = () => {
 
     // ─── Category ─────────────────────────────────────────────────────────────
     const categoryObj = CATEGORIES.find(c => c.id === currentCategory);
-    const categoryName = categoryObj?.name?.[language] || currentCategory || 'Naməlum';
+    const categoryName = chaosEvent === 'blind_round'
+        ? '???'
+        : (categoryObj?.name?.[language] || currentCategory || 'Naməlum');
 
     // imposter üçün görünən kateqoriya (server tərəfindən göndərilir)
-    const imposterDisplayCategory = imposterCategory || currentCategory || '?';
+    const imposterDisplayCategory = chaosEvent === 'blind_round'
+        ? '???'
+        : (imposterCategory || currentCategory || '?');
 
     // ─── Ordered players for local mode ───────────────────────────────────────
     const orderedPlayers = (() => {
@@ -235,7 +239,7 @@ const ScreenGame = () => {
                                                 <AlertTriangle className="w-20 h-20 text-red-500 mb-4" />
                                                 <h2 className="text-4xl font-black text-red-500 mb-2">{t.imposters}</h2>
                                                 <p className="text-red-300">{t.youAreImposter}</p>
-                                                {imposterHint && <div className="mt-6 p-4 bg-[var(--bg-primary)]/80 rounded-xl"><p className="text-xs text-[var(--text-secondary)] uppercase">Mövzu</p><p className="text-xl font-bold text-[var(--text-primary)]">{categoryName}</p></div>}
+                                                {imposterHint && <div className="mt-6 p-4 bg-[var(--bg-primary)]/80 rounded-xl"><p className="text-xs text-[var(--text-secondary)] uppercase">Mövzu</p><p className="text-xl font-bold text-[var(--text-primary)]">{imposterDisplayCategory}</p></div>}
                                                 {otherImposters.length > 0 && <div className="mt-4 p-3 bg-red-900/30 rounded-xl border border-red-500/30 w-full"><p className="text-xs text-red-300 uppercase mb-1">{t.otherImposters}</p><div className="flex flex-wrap justify-center gap-2">{otherImposters.map((n, i) => <span key={i} className="px-2 py-1 bg-red-500/20 rounded text-red-200 text-sm font-bold">{n}</span>)}</div></div>}
                                             </>
                                         ) : (
@@ -719,7 +723,11 @@ const ScreenGame = () => {
                                         <div className="p-4 bg-red-900/20 rounded-xl border border-red-500/20">
                                             <span className="text-xs text-red-400 uppercase">Kateqoriyan</span>
                                             <h3 className="text-xl font-bold text-white">{imposterDisplayCategory}</h3>
-                                            <p className="text-xs text-red-300/60 mt-1">Sən sözü bilmirsən, yalnız kateqoriyanı bilirsin</p>
+                                            <p className="text-xs text-red-300/60 mt-1">
+                                                {chaosEvent === 'blind_round'
+                                                    ? 'Kor Raund: Kateqoriya gizlidir!'
+                                                    : 'Sən sözü bilmirsən, yalnız kateqoriyanı bilirsin'}
+                                            </p>
                                         </div>
                                         {/* Spy Word Cheat: Secret Admin imposter olduqda əsl sözü göstər */}
                                         {spyWord && (
@@ -864,9 +872,10 @@ const ScreenGame = () => {
                         <h2 className="text-[var(--text-secondary)] uppercase text-sm font-bold mb-2">Mövzu</h2>
                         <div className="relative">
                             <h1 className={`text-4xl font-black text-[var(--text-primary)] transition-all duration-300 ${isHolding ? 'blur-0' : 'blur-md select-none'}`}>
-                                {isHolding ? (isImposter ? '🚫' : categoryName) : '???'}
+                                {isHolding ? (isImposter && !imposterHint ? '🚫' : categoryName) : '???'}
                             </h1>
-                            {isHolding && isImposter && <p className="text-red-500 text-xs font-bold absolute -bottom-6 w-full text-center animate-bounce">Imposter mövzunu görə bilməz!</p>}
+                            {isHolding && isImposter && !imposterHint && <p className="text-red-500 text-xs font-bold absolute -bottom-6 w-full text-center animate-bounce">Imposter mövzunu görə bilməz!</p>}
+                            {isHolding && chaosEvent === 'blind_round' && <p className="text-gray-500 text-xs font-bold absolute -bottom-6 w-full text-center animate-bounce">Kor Raund: Mövzu gizlidir!</p>}
                             <div className="absolute inset-0 flex items-center justify-center cursor-pointer"
                                 onMouseDown={() => setIsHolding(true)} onMouseUp={() => setIsHolding(false)} onMouseLeave={() => setIsHolding(false)}
                                 onTouchStart={() => setIsHolding(true)} onTouchEnd={() => setIsHolding(false)}>

@@ -313,11 +313,18 @@ const useGameStore = create(
             startLocalGame: (categoryId, wordObjects, settings) => {
                 const { players } = get();
 
+                // ── Chaos Mode ────────────────────────────────────────────────────────
+                let chaosEvent = null;
+                if (settings.chaosMode) {
+                    const events = ['blind_round'];
+                    chaosEvent = events[Math.floor(Math.random() * events.length)];
+                }
+
                 const isTrollActive = settings.trollMode && Math.random() < 0.5;
-                const newPlayers = players.map(p => ({ ...p, isImposter: false, votes: 0, isAlive: true }));
+                const newPlayers = players.map(p => ({ ...p, isImposter: false, role: 'crew', votes: 0, isAlive: true }));
 
                 if (isTrollActive) {
-                    newPlayers.forEach(p => p.isImposter = true);
+                    newPlayers.forEach(p => { p.isImposter = true; p.role = 'imposter'; });
                 } else {
                     let imposterCount = Math.min(settings.imposterCount || 1, Math.max(1, newPlayers.length - 1));
                     const indices = Array.from({ length: newPlayers.length }, (_, i) => i);
@@ -326,7 +333,16 @@ const useGameStore = create(
                         [indices[i], indices[j]] = [indices[j], indices[i]];
                     }
                     const imposterSet = new Set(indices.slice(0, imposterCount));
-                    newPlayers.forEach((p, i) => p.isImposter = imposterSet.has(i));
+                    newPlayers.forEach((p, i) => {
+                        if (imposterSet.has(i)) { p.isImposter = true; p.role = 'imposter'; }
+                    });
+
+                    if (settings.includeJester && newPlayers.length > imposterCount + 1) {
+                        const crewIndices = indices.slice(imposterCount);
+                        const jesterIdx = crewIndices[Math.floor(Math.random() * crewIndices.length)];
+                        newPlayers[jesterIdx].role = 'jester';
+                        newPlayers[jesterIdx].isImposter = false;
+                    }
                 }
 
                 const catArray = Array.isArray(categoryId) ? categoryId : [categoryId];
@@ -338,10 +354,16 @@ const useGameStore = create(
                 else if (imposters.length) startingPlayerId = imposters[Math.floor(Math.random() * imposters.length)].id;
                 else startingPlayerId = newPlayers[0].id;
 
-                // wordObjects formatı: [{word, category}]
-                const validWordObjs = Array.isArray(wordObjects) && wordObjects.length > 0
+                // wordObjects formatı: [{word, category}] və ya sətirlər
+                let validWordObjs = Array.isArray(wordObjects) && wordObjects.length > 0
                     ? wordObjects
                     : [];
+
+                if (validWordObjs.length > 0 && typeof validWordObjs[0] === 'string') {
+                    const chosenCat = catArray[Math.floor(Math.random() * catArray.length)];
+                    validWordObjs = validWordObjs.map(w => ({ word: w, category: chosenCat }));
+                }
+
                 const chosenWordObj = validWordObjs[Math.floor(Math.random() * validWordObjs.length)] || { word: '?', category: '?' };
 
                 set({
@@ -351,6 +373,7 @@ const useGameStore = create(
                     selectedCategories: catArray,
                     currentWord: chosenWordObj.word,
                     currentCategory: chosenWordObj.category,
+                    chaosEvent,
                     startingPlayerId,
                     isTrollActive,
                     timeLimit: settings.timeLimit,
