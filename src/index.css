@@ -7,6 +7,7 @@
     /* Light Mode (Default) */
     --bg-primary: #f3f4f6; /* Gray-100 */
     --bg-card: #ffffff;
+    --bg-card-rgb: 255, 255, 255;
     --text-primary: #1f2937; /* Gray-800 */
     --text-secondary: #6b7280; /* Gray-500 */
     --accent-color: #a3e635; /* Lime-400 (Start Button) */
@@ -18,6 +19,7 @@
     /* Dark Mode */
     --bg-primary: #0f172a; /* Slate-900 */
     --bg-card: #1e293b; /* Slate-800 */
+    --bg-card-rgb: 30, 41, 59;
     --text-primary: #f1f5f9; /* Slate-100 */
     --text-secondary: #94a3b8; /* Slate-400 */
     --accent-color: #84cc16; /* Lime-500 */
@@ -29,6 +31,7 @@
     /* Cyberpunk Neon */
     --bg-primary: #050505;
     --bg-card: #0a0a0a;
+    --bg-card-rgb: 10, 10, 10;
     --text-primary: #22c55e; /* Neon Green */
     --text-secondary: #15803d;
     --accent-color: #d946ef; /* Fuchsia-500 */
@@ -40,6 +43,7 @@
     /* Sunset Orange */
     --bg-primary: #fff7ed; /* Orange-50 */
     --bg-card: #ffedd5; /* Orange-100 */
+    --bg-card-rgb: 255, 237, 213;
     --text-primary: #9a3412; /* Orange-900 */
     --text-secondary: #c2410c; /* Orange-700 */
     --accent-color: #f97316; /* Orange-500 */
@@ -48,7 +52,25 @@
   }
 
   body {
-    @apply bg-[var(--bg-primary)] text-[var(--text-primary)] overflow-x-hidden select-none transition-colors duration-300;
+    @apply bg-[var(--bg-primary)] text-[var(--text-primary)] overflow-x-hidden select-none transition-colors duration-300 relative;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle at 50% 50%, rgba(var(--accent-rgb, 163, 230, 53), 0.03) 0%, transparent 60%);
+    z-index: -1;
+    pointer-events: none;
+    animation: slow-spin 30s linear infinite;
+  }
+
+  @keyframes slow-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
   
   input, textarea {
@@ -65,7 +87,9 @@
   }
 
   .card-base {
-    @apply bg-[var(--bg-card)] rounded-2xl p-4 shadow-sm border border-[var(--border-color)] transition-colors duration-300;
+    @apply bg-[var(--bg-card)] backdrop-blur-xl rounded-3xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-[var(--border-color)] transition-all duration-300 hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)];
+    /* Apply opacity to custom property instead since arbitrary values in apply can be tricky with opacity modifier */
+    background-color: rgba(var(--bg-card-rgb, 255, 255, 255), 0.8);
   }
 
   .icon-btn {

@@ -665,6 +665,75 @@ io.on('connection', (socket) => {
         processVotesIfComplete(roomCode);
     });
 
+    // ── Sheriff Shoot ────────────────────────────────────────────────────────
+    socket.on('sheriff_shoot', ({ roomCode, targetId }) => {
+        const room = rooms[roomCode];
+        if (!room) return;
+
+        const sheriff = room.players.find(p => p.id === socket.id);
+        // Ensure sheriff has not already shot someone (only one shot allowed)
+        if (!sheriff || sheriff.role !== 'sheriff' || !sheriff.isAlive || sheriff.hasShot) return;
+
+        const target = room.players.find(p => p.id === targetId);
+        if (!target || !target.isAlive) return;
+
+        sheriff.hasShot = true;
+
+        let eliminatedName = '';
+        let message = '';
+        let wasImposter = false;
+
+        if (target.isImposter) {
+            // Sheriff vurur imposter-i -> Imposter ölür
+            target.isAlive = false;
+            eliminatedName = target.name;
+            message = `Şerif düzgün vurdu! ${target.name} imposter idi.`;
+            wasImposter = true;
+        } else {
+            // Sheriff vurur vətəndaşı -> Sheriff özü ölür
+            sheriff.isAlive = false;
+            eliminatedName = sheriff.name;
+            message = `Şerif səhv adamı vurdu! Şerif ${sheriff.name} öldü.`;
+        }
+
+        // Yeni discussion order: yalnız alive oyunçular
+        room.discussionOrder = room.players
+            .filter(p => p.isAlive)
+            .map(p => p.id);
+
+        const payload = {
+            eliminatedName,
+            wasImposter,
+            word: room.currentWord,
+            category: room.currentCategory,
+            imposters: room.players.filter(p => p.isImposter).map(p => p.name),
+            jester: room.players.find(p => p.role === 'jester')?.name || null,
+            sheriff: sheriff.name,
+            players: room.players
+        };
+
+        const winCheck = checkWinCondition(room);
+
+        if (winCheck.over) {
+            const result = {
+                ...payload,
+                winner: winCheck.winner,
+                reason: winCheck.reason
+            };
+            room.gameState = 'result';
+            io.to(roomCode).emit('game_over', result);
+            console.log(`[SHERIFF] ${roomCode}: ${winCheck.winner} wins. Shot result: ${message}`);
+        } else {
+            room.gameState = 'next_round';
+            io.to(roomCode).emit('next_round', {
+                ...payload,
+                alivePlayers: room.players.filter(p => p.isAlive),
+                message
+            });
+            console.log(`[SHERIFF] ${roomCode}: Round continues. Shot result: ${message}`);
+        }
+    });
+
     // ── Imposter Last Guess ──────────────────────────────────────────────────
     socket.on('imposter_guess', ({ roomCode, guess }) => {
         const room = rooms[roomCode];

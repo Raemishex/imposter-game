@@ -49,6 +49,7 @@ const ScreenGame = () => {
     const [isReady, setIsReady] = useState(false);         // tracks if player pressed Hazıram
     const [localPhase, setLocalPhase] = useState('pass');
     const [exitModal, setExitModal] = useState(false);
+    const [sheriffModal, setSheriffModal] = useState(false);
 
     // Play flip sound when card is revealed; mark hasSeenCard
     useEffect(() => {
@@ -164,9 +165,24 @@ const ScreenGame = () => {
         startDiscussion();
     };
 
+    const handleSheriffShoot = (targetId) => {
+        setSheriffModal(false);
+        playSound('click');
+        if (mode === 'online') {
+            useGameStore.getState().sheriffShootOnline?.(targetId);
+        } else {
+            useGameStore.getState().sheriffShootLocal?.(targetId);
+        }
+    };
+
     // ─── Shared helpers ────────────────────────────────────────────────────────
     const isOnlineDiscussion = mode === 'online' && (gameState === 'discussion' || gameState === 'discussion_ended');
     const isLocalDiscussionActive = mode === 'local' && localDiscussion !== null;
+
+    const aliveSheriff = players.find(p => p.role === 'sheriff' && p.isAlive);
+    const canIShoot = mode === 'online'
+        ? (currentPlayer?.role === 'sheriff' && currentPlayer?.isAlive && !currentPlayer?.hasShot)
+        : (aliveSheriff !== undefined && !aliveSheriff?.hasShot);
 
     // ─── LOCAL REVEAL PHASE ───────────────────────────────────────────────────
     if (mode === 'local' && gameState === 'local_reveal') {
@@ -404,7 +420,22 @@ const ScreenGame = () => {
                 )}
 
                 {/* Input / Waiting Area */}
-                <div className="flex-1 flex flex-col justify-end px-4 pb-6 gap-3">
+                <div className="flex-1 flex flex-col justify-end px-4 pb-6 gap-3 relative">
+
+                    {/* Floating Sheriff Button */}
+                    {canIShoot && (
+                        <motion.button
+                            initial={{ scale: 0, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={() => setSheriffModal(true)}
+                            className="absolute -top-16 right-4 p-4 bg-blue-600 text-white rounded-full shadow-[0_0_15px_rgba(37,99,235,0.5)] flex items-center justify-center border-2 border-blue-400 z-10"
+                        >
+                            <span className="text-xl">🔫</span>
+                        </motion.button>
+                    )}
+
                     {turnData.isMyTurn ? (
                         <>
                             <p className="text-center text-sm text-[var(--text-secondary)]">
@@ -464,6 +495,7 @@ const ScreenGame = () => {
 
                 <ExitModal isOpen={exitModal} onClose={() => setExitModal(false)} t={t} mode={mode} currentPlayer={currentPlayer} returnToLobby={returnToLobby} leaveRoom={leaveRoom} />
                 <PlayerListModal isOpen={playerListModal} onClose={() => setPlayerListModal(false)} players={orderedPlayers} currentTurnIndex={turnData.turnIndex} />
+                <SheriffModal isOpen={sheriffModal} onClose={() => setSheriffModal(false)} players={players} onShoot={handleSheriffShoot} currentPlayer={currentPlayer} mode={mode} />
                 <Chat />
             </div>
         );
@@ -904,6 +936,7 @@ const ScreenGame = () => {
 
             <ExitModal isOpen={exitModal} onClose={() => setExitModal(false)} t={t} mode={mode} currentPlayer={currentPlayer} returnToLobby={returnToLobby} leaveRoom={leaveRoom} />
             <PlayerListModal isOpen={playerListModal} onClose={() => setPlayerListModal(false)} players={players} currentTurnIndex={-1} />
+            <SheriffModal isOpen={sheriffModal} onClose={() => setSheriffModal(false)} players={players} onShoot={handleSheriffShoot} currentPlayer={currentPlayer} mode={mode} />
             <Chat />
         </div>
     );
@@ -955,6 +988,43 @@ const PlayerListModal = ({ isOpen, onClose, players, currentTurnIndex }) => {
             <div className="mt-4">
                 <button onClick={onClose} className="btn-secondary w-full py-2">Bağla</button>
             </div>
+        </Modal>
+    );
+};
+
+const SheriffModal = ({ isOpen, onClose, players, onShoot, currentPlayer, mode }) => {
+    if (!isOpen) return null;
+
+    // Yalnız sağ qalan oyunçuları göstər.
+    // Online rejimdə Şerif özünü görə bilməz.
+    // Local rejimdə "Şerif" özünü vurmasın deyə onu siyahıdan çıxarırıq.
+    const targets = players.filter(p => {
+        if (!p.isAlive) return false;
+        if (mode === 'online' && p.id === currentPlayer?.id) return false;
+        if (mode === 'local' && p.role === 'sheriff') return false;
+        return true;
+    });
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title="🔫 Şerif Atəşi" type="alert">
+            <p className="text-sm text-[var(--text-secondary)] mb-4">
+                Kimi vurmaq istəyirsiniz? Əgər vətəndaşı vursanız, özünüz öləcəksiniz!
+            </p>
+            <div className="grid grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1 mb-4">
+                {targets.map(p => (
+                    <button
+                        key={p.id}
+                        onClick={() => onShoot(p.id)}
+                        className="bg-[var(--bg-card)] rounded-xl p-3 border border-[var(--border-color)] text-center hover:border-red-500 hover:bg-red-500/10 transition-all active:scale-95"
+                    >
+                        <div className="w-10 h-10 rounded-full bg-[var(--accent-color)]/10 flex items-center justify-center mx-auto mb-2 text-[var(--accent-color)] font-black text-lg">
+                            {p.name.charAt(0).toUpperCase()}
+                        </div>
+                        <p className="font-bold text-[var(--text-primary)] text-sm truncate">{p.name}</p>
+                    </button>
+                ))}
+            </div>
+            <button onClick={onClose} className="btn-secondary w-full py-2 border border-[var(--border-color)] rounded-xl font-bold text-[var(--text-primary)]">Ləğv et</button>
         </Modal>
     );
 };

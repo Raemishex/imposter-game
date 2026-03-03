@@ -269,6 +269,82 @@ const useGameStore = create(
                 socket.emit('imposter_guess', { roomCode, guess });
             },
 
+            sheriffShootLocal: (targetId) => {
+                const { players, currentWord, currentCategory } = get();
+
+                const target = players.find(p => p.id === targetId);
+                const sheriff = players.find(p => p.role === 'sheriff');
+                if (!target || !sheriff || !target.isAlive || !sheriff.isAlive || sheriff.hasShot) return;
+
+                sheriff.hasShot = true;
+
+                let eliminatedName = '';
+                let message = '';
+                let wasImposter = false;
+
+                if (target.isImposter) {
+                    target.isAlive = false;
+                    eliminatedName = target.name;
+                    message = `Şerif düzgün vurdu! ${target.name} imposter idi.`;
+                    wasImposter = true;
+                } else {
+                    sheriff.isAlive = false;
+                    eliminatedName = sheriff.name;
+                    message = `Şerif səhv adamı vurdu! Şerif ${sheriff.name} öldü.`;
+                }
+
+                const alivePlayers = players.filter(p => p.isAlive);
+                const aliveImposters = alivePlayers.filter(p => p.isImposter);
+                const aliveCrew = alivePlayers.filter(p => !p.isImposter && p.role !== 'jester');
+
+                let over = false;
+                let winner = null;
+                let reason = null;
+
+                if (aliveImposters.length === 0) {
+                    over = true;
+                    winner = 'crew';
+                    reason = `Bütün imposterlər tapıldı! Vətəndaşlar qazandı! 🎉`;
+                } else if (aliveImposters.length >= aliveCrew.length) {
+                    over = true;
+                    winner = 'imposter';
+                    reason = `İmposterlar üstünlük qazandı! 😈`;
+                }
+
+                const resultPayload = {
+                    eliminatedName,
+                    wasImposter,
+                    word: currentWord,
+                    category: currentCategory,
+                    imposters: players.filter(p => p.isImposter).map(p => p.name),
+                    jester: players.find(p => p.role === 'jester')?.name || null,
+                    sheriff: sheriff.name,
+                    players
+                };
+
+                if (over) {
+                    set({
+                        gameState: 'result',
+                        gameResult: { ...resultPayload, winner, reason }
+                    });
+                } else {
+                    set({
+                        gameState: 'next_round',
+                        nextRoundInfo: {
+                            ...resultPayload,
+                            alivePlayers,
+                            message
+                        },
+                        players: [...players]
+                    });
+                }
+            },
+
+            sheriffShootOnline: (targetId) => {
+                const { roomCode } = get();
+                if (roomCode) socket.emit('sheriff_shoot', { roomCode, targetId });
+            },
+
             returnToLobby: () => {
                 const { mode, roomCode } = get();
                 if (mode === 'online' && roomCode) {
@@ -337,11 +413,19 @@ const useGameStore = create(
                         if (imposterSet.has(i)) { p.isImposter = true; p.role = 'imposter'; }
                     });
 
-                    if (settings.includeJester && newPlayers.length > imposterCount + 1) {
-                        const crewIndices = indices.slice(imposterCount);
-                        const jesterIdx = crewIndices[Math.floor(Math.random() * crewIndices.length)];
+                    let availableCrewIndices = indices.slice(imposterCount);
+
+                    if (settings.includeJester && availableCrewIndices.length > 0) {
+                        const jesterIdx = availableCrewIndices[Math.floor(Math.random() * availableCrewIndices.length)];
                         newPlayers[jesterIdx].role = 'jester';
                         newPlayers[jesterIdx].isImposter = false;
+                        availableCrewIndices = availableCrewIndices.filter(i => i !== jesterIdx);
+                    }
+
+                    if (settings.includeSheriff && availableCrewIndices.length > 0) {
+                        const sheriffIdx = availableCrewIndices[Math.floor(Math.random() * availableCrewIndices.length)];
+                        newPlayers[sheriffIdx].role = 'sheriff';
+                        newPlayers[sheriffIdx].isImposter = false;
                     }
                 }
 

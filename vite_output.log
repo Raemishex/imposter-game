@@ -8,3 +8,15 @@ Re-optimizing dependencies because vite config has changed
 
   ➜  Local:   http://localhost:5173/
   ➜  Network: http://192.168.0.2:5173/
+8:33:32 PM [vite] hmr update /src/index.css, /src/App.jsx, /src/components/ScreenLobby.jsx, /src/components/ScreenGame.jsx, /src/components/ScreenVote.jsx, /src/components/ScreenResult.jsx, /src/components/Chat.jsx, /src/components/HistoryModal.jsx
+8:33:47 PM [vite] hmr update /src/components/ScreenLobby.jsx, /src/index.css
+8:38:56 PM [vite] hmr update /src/App.jsx, /src/index.css, /src/components/ScreenLobby.jsx, /src/components/ScreenGame.jsx, /src/components/ScreenVote.jsx, /src/components/ScreenResult.jsx, /src/components/Chat.jsx, /src/components/HistoryModal.jsx
+8:40:27 PM [vite] hmr update /src/components/ScreenGame.jsx, /src/index.css
+8:42:33 PM [vite] hmr update /src/components/ScreenGame.jsx, /src/index.css
+8:43:07 PM [vite] hmr update /src/index.css
+8:43:22 PM [vite] hmr update /src/components/ScreenLobby.jsx, /src/index.css
+8:44:02 PM [vite] hmr update /src/index.css
+8:50:40 PM [vite] hmr update /src/components/ScreenGame.jsx, /src/index.css
+9:00:25 PM [vite] hmr update /src/index.css
+9:02:06 PM [vite] hmr update /src/App.jsx, /src/index.css, /src/components/ScreenLobby.jsx, /src/components/ScreenGame.jsx, /src/components/ScreenVote.jsx, /src/components/ScreenResult.jsx, /src/components/Chat.jsx, /src/components/HistoryModal.jsx
+9:03:11 PM [vite] hmr update /src/components/ScreenGame.jsx, /src/index.css
