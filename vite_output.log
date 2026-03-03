@@ -20,3 +20,6 @@ Re-optimizing dependencies because vite config has changed
 9:00:25 PM [vite] hmr update /src/index.css
 9:02:06 PM [vite] hmr update /src/App.jsx, /src/index.css, /src/components/ScreenLobby.jsx, /src/components/ScreenGame.jsx, /src/components/ScreenVote.jsx, /src/components/ScreenResult.jsx, /src/components/Chat.jsx, /src/components/HistoryModal.jsx
 9:03:11 PM [vite] hmr update /src/components/ScreenGame.jsx, /src/index.css
+10:04:53 PM [vite] hmr update /src/components/ScreenGame.jsx, /src/index.css
+10:13:23 PM [vite] hmr update /src/components/ScreenGame.jsx, /src/index.css
+10:13:46 PM [vite] hmr update /src/components/ScreenGame.jsx, /src/index.css
