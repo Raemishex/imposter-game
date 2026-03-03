@@ -40,6 +40,7 @@ const ScreenLobby = () => {
     const [showToast, setShowToast] = useState(false);
     const [imposterSquad, setImposterSquad] = useState(false);
     const [includeJester, setIncludeJester] = useState(false);
+    const [includeSheriff, setIncludeSheriff] = useState(false);
     const [chaosMode, setChaosMode] = useState(false);
     const [showSocialModal, setShowSocialModal] = useState(false);
     const [historyModal, setHistoryModal] = useState(false);
@@ -203,6 +204,7 @@ const ScreenLobby = () => {
             imposterSquad,
             timeLimit,
             includeJester,
+            includeSheriff,
             chaosMode
         };
 
@@ -265,7 +267,7 @@ const ScreenLobby = () => {
     };
 
     return (
-        <div className="flex flex-col min-h-screen pb-24 overflow-y-auto bg-[var(--bg-primary)] transition-colors duration-300 relative">
+        <div className="flex flex-col min-h-screen pb-24 overflow-y-auto bg-transparent transition-colors duration-300 relative">
             {/* Host Migration / System Toast */}
             <AnimatePresence>
                 {toastMessage && (
@@ -818,23 +820,27 @@ const ScreenLobby = () => {
                                 <span className="text-xs bg-[var(--bg-primary)] px-2 py-1 rounded-md">{selectedCats.length} {t.selected}</span>
                             </div>
                             
-                            <div className={`flex flex-col gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1 ${!isHost ? 'opacity-70 pointer-events-none' : ''}`}>
+                            <div className={`grid grid-cols-2 gap-2 max-h-56 overflow-y-auto custom-scrollbar pr-1 ${!isHost ? 'opacity-70 pointer-events-none' : ''}`}>
                                 {CATEGORIES.map(cat => {
                                     const isSelected = selectedCats.includes(cat.id);
                                     return (
-                                        <button 
+                                        <motion.button
                                             key={cat.id}
+                                            whileHover={{ scale: 1.02 }}
+                                            whileTap={{ scale: 0.95 }}
                                             onClick={() => toggleCategory(cat.id)}
-                                            className={`w-full p-3 rounded-xl flex items-center justify-between transition-all border ${isSelected ? 'bg-[var(--bg-primary)] border-[var(--text-primary)] shadow-sm' : 'border-transparent hover:bg-[var(--bg-primary)]'}`}
+                                            className={`w-full p-3 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all border-2 ${isSelected ? 'bg-[var(--bg-primary)] border-[var(--text-primary)] shadow-md' : 'bg-transparent border-transparent hover:bg-[var(--bg-primary)] hover:border-[var(--border-color)]'}`}
                                         >
-                                            <div className="flex items-center gap-3">
-                                                <div className={`p-2 rounded-lg bg-gradient-to-br ${cat.color} text-white`}>
-                                                    <cat.icon className="w-4 h-4" />
-                                                </div>
-                                                <span className={`font-bold ${isSelected ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}`}>{cat.name[language] || cat.name.az}</span>
+                                            <div className={`p-3 rounded-xl bg-gradient-to-br ${cat.color} text-white shadow-sm relative`}>
+                                                <cat.icon className="w-6 h-6" />
+                                                {isSelected && (
+                                                    <div className="absolute -top-2 -right-2 bg-[var(--text-primary)] rounded-full p-0.5 shadow-sm">
+                                                        <Check className="w-3 h-3 text-[var(--bg-primary)]" />
+                                                    </div>
+                                                )}
                                             </div>
-                                            {isSelected && <Check className="w-5 h-5 text-[var(--accent-hover)]" />}
-                                        </button>
+                                            <span className={`text-xs font-bold ${isSelected ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}`}>{cat.name[language] || cat.name.az}</span>
+                                        </motion.button>
                                     );
                                 })}
                             </div>
@@ -843,19 +849,19 @@ const ScreenLobby = () => {
                         {/* Settings Section */}
                         <div className={`card-base space-y-4 ${!isHost ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
                              {/* Imposter Count */}
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between bg-[var(--bg-primary)] p-3 rounded-2xl border border-[var(--border-color)]">
                                 <div className="flex items-center gap-2 text-[var(--text-secondary)] text-sm font-bold uppercase tracking-wider">
-                                    <span>🥷 {t.imposters}</span>
+                                    <span className="text-xl">🥷</span> {t.imposters}
                                 </div>
-                                <div className="flex items-center gap-3 bg-[var(--bg-primary)] rounded-lg p-1">
-                                    <button onClick={() => { playClick(); setImposterCount(Math.max(1, imposterCount - 1)); }} className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-[var(--border-color)] text-[var(--text-primary)] font-bold active:scale-95 transition-transform">-</button>
-                                    <span className="text-[var(--text-primary)] font-mono font-bold w-4 text-center">{imposterCount}</span>
-                                    <button onClick={() => { playClick(); setImposterCount(Math.min(players.length - 1, imposterCount + 1)); }} className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-[var(--border-color)] text-[var(--text-primary)] font-bold active:scale-95 transition-transform">+</button>
+                                <div className="flex items-center gap-4 bg-[var(--bg-card)] rounded-xl p-1 shadow-sm border border-[var(--border-color)]">
+                                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => { playClick(); setImposterCount(Math.max(1, imposterCount - 1)); }} className="w-8 h-8 rounded-lg flex items-center justify-center bg-[var(--bg-primary)] text-[var(--text-primary)] font-black text-lg">-</motion.button>
+                                    <span className="text-[var(--accent-color)] font-black text-xl w-4 text-center drop-shadow-sm">{imposterCount}</span>
+                                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => { playClick(); setImposterCount(Math.min(players.length - 1, imposterCount + 1)); }} className="w-8 h-8 rounded-lg flex items-center justify-center bg-[var(--bg-primary)] text-[var(--text-primary)] font-black text-lg">+</motion.button>
                                 </div>
                             </div>
 
                             {/* Toggles */}
-                            <div className="space-y-3 pt-2 border-t border-[var(--border-color)]">
+                            <div className="space-y-4 pt-4 border-t border-[var(--border-color)]">
                                 <div className="flex items-center justify-between">
                                     <span className="text-sm font-bold text-[var(--text-primary)] pl-7 relative">
                                         <span className="absolute left-0 top-0.5">⏰</span> {t.timeLimit}
@@ -911,6 +917,19 @@ const ScreenLobby = () => {
                                     </div>
                                     <button onClick={() => { playClick(); setIncludeJester(!includeJester); }} className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${includeJester ? 'bg-purple-500' : 'bg-[var(--border-color)]'}`}>
                                         <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${includeJester ? 'left-6' : 'left-1'}`} />
+                                    </button>
+                                </div>
+
+                                {/* Sheriff Toggle */}
+                                <div className="flex items-center justify-between">
+                                    <div className="flex flex-col">
+                                        <span className="text-sm font-bold text-[var(--text-primary)] pl-7 relative">
+                                            <span className="absolute left-0 top-0.5">🤠</span> {t.sheriffRole}
+                                        </span>
+                                        <span className="text-[10px] text-[var(--text-secondary)] pl-7 leading-tight max-w-[200px]">{t.sheriffRoleDesc}</span>
+                                    </div>
+                                    <button onClick={() => { playClick(); setIncludeSheriff(!includeSheriff); }} className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${includeSheriff ? 'bg-blue-500' : 'bg-[var(--border-color)]'}`}>
+                                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${includeSheriff ? 'left-6' : 'left-1'}`} />
                                     </button>
                                 </div>
 

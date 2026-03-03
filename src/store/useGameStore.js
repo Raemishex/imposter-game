@@ -269,6 +269,82 @@ const useGameStore = create(
                 socket.emit('imposter_guess', { roomCode, guess });
             },
 
+            sheriffShootLocal: (targetId) => {
+                const { players, currentWord, currentCategory } = get();
+
+                const target = players.find(p => p.id === targetId);
+                const sheriff = players.find(p => p.role === 'sheriff');
+                if (!target || !sheriff || !target.isAlive || !sheriff.isAlive || sheriff.hasShot) return;
+
+                sheriff.hasShot = true;
+
+                let eliminatedName = '';
+                let message = '';
+                let wasImposter = false;
+
+                if (target.isImposter) {
+                    target.isAlive = false;
+                    eliminatedName = target.name;
+                    message = `Şerif düzgün vurdu! ${target.name} imposter idi.`;
+                    wasImposter = true;
+                } else {
+                    sheriff.isAlive = false;
+                    eliminatedName = sheriff.name;
+                    message = `Şerif səhv adamı vurdu! Şerif ${sheriff.name} öldü.`;
+                }
+
+                const alivePlayers = players.filter(p => p.isAlive);
+                const aliveImposters = alivePlayers.filter(p => p.isImposter);
+                const aliveCrew = alivePlayers.filter(p => !p.isImposter && p.role !== 'jester');
+
+                let over = false;
+                let winner = null;
+                let reason = null;
+
+                if (aliveImposters.length === 0) {
+                    over = true;
+                    winner = 'crew';
+                    reason = `Bütün imposterlər tapıldı! Vətəndaşlar qazandı! 🎉`;
+                } else if (aliveImposters.length >= aliveCrew.length) {
+                    over = true;
+                    winner = 'imposter';
+                    reason = `İmposterlar üstünlük qazandı! 😈`;
+                }
+
+                const resultPayload = {
+                    eliminatedName,
+                    wasImposter,
+                    word: currentWord,
+                    category: currentCategory,
+                    imposters: players.filter(p => p.isImposter).map(p => p.name),
+                    jester: players.find(p => p.role === 'jester')?.name || null,
+                    sheriff: sheriff.name,
+                    players
+                };
+
+                if (over) {
+                    set({
+                        gameState: 'result',
+                        gameResult: { ...resultPayload, winner, reason }
+                    });
+                } else {
+                    set({
+                        gameState: 'next_round',
+                        nextRoundInfo: {
+                            ...resultPayload,
+                            alivePlayers,
+                            message
+                        },
+                        players: [...players]
+                    });
+                }
+            },
+
+            sheriffShootOnline: (targetId) => {
+                const { roomCode } = get();
+                if (roomCode) socket.emit('sheriff_shoot', { roomCode, targetId });
+            },
+
             returnToLobby: () => {
                 const { mode, roomCode } = get();
                 if (mode === 'online' && roomCode) {
@@ -313,11 +389,18 @@ const useGameStore = create(
             startLocalGame: (categoryId, wordObjects, settings) => {
                 const { players } = get();
 
+                // ── Chaos Mode ────────────────────────────────────────────────────────
+                let chaosEvent = null;
+                if (settings.chaosMode) {
+                    const events = ['blind_round'];
+                    chaosEvent = events[Math.floor(Math.random() * events.length)];
+                }
+
                 const isTrollActive = settings.trollMode && Math.random() < 0.5;
-                const newPlayers = players.map(p => ({ ...p, isImposter: false, votes: 0, isAlive: true }));
+                const newPlayers = players.map(p => ({ ...p, isImposter: false, role: 'crew', votes: 0, isAlive: true }));
 
                 if (isTrollActive) {
-                    newPlayers.forEach(p => p.isImposter = true);
+                    newPlayers.forEach(p => { p.isImposter = true; p.role = 'imposter'; });
                 } else {
                     let imposterCount = Math.min(settings.imposterCount || 1, Math.max(1, newPlayers.length - 1));
                     const indices = Array.from({ length: newPlayers.length }, (_, i) => i);
@@ -326,7 +409,24 @@ const useGameStore = create(
                         [indices[i], indices[j]] = [indices[j], indices[i]];
                     }
                     const imposterSet = new Set(indices.slice(0, imposterCount));
-                    newPlayers.forEach((p, i) => p.isImposter = imposterSet.has(i));
+                    newPlayers.forEach((p, i) => {
+                        if (imposterSet.has(i)) { p.isImposter = true; p.role = 'imposter'; }
+                    });
+
+                    let availableCrewIndices = indices.slice(imposterCount);
+
+                    if (settings.includeJester && availableCrewIndices.length > 0) {
+                        const jesterIdx = availableCrewIndices[Math.floor(Math.random() * availableCrewIndices.length)];
+                        newPlayers[jesterIdx].role = 'jester';
+                        newPlayers[jesterIdx].isImposter = false;
+                        availableCrewIndices = availableCrewIndices.filter(i => i !== jesterIdx);
+                    }
+
+                    if (settings.includeSheriff && availableCrewIndices.length > 0) {
+                        const sheriffIdx = availableCrewIndices[Math.floor(Math.random() * availableCrewIndices.length)];
+                        newPlayers[sheriffIdx].role = 'sheriff';
+                        newPlayers[sheriffIdx].isImposter = false;
+                    }
                 }
 
                 const catArray = Array.isArray(categoryId) ? categoryId : [categoryId];
@@ -338,10 +438,16 @@ const useGameStore = create(
                 else if (imposters.length) startingPlayerId = imposters[Math.floor(Math.random() * imposters.length)].id;
                 else startingPlayerId = newPlayers[0].id;
 
-                // wordObjects formatı: [{word, category}]
-                const validWordObjs = Array.isArray(wordObjects) && wordObjects.length > 0
+                // wordObjects formatı: [{word, category}] və ya sətirlər
+                let validWordObjs = Array.isArray(wordObjects) && wordObjects.length > 0
                     ? wordObjects
                     : [];
+
+                if (validWordObjs.length > 0 && typeof validWordObjs[0] === 'string') {
+                    const chosenCat = catArray[Math.floor(Math.random() * catArray.length)];
+                    validWordObjs = validWordObjs.map(w => ({ word: w, category: chosenCat }));
+                }
+
                 const chosenWordObj = validWordObjs[Math.floor(Math.random() * validWordObjs.length)] || { word: '?', category: '?' };
 
                 set({
@@ -351,6 +457,7 @@ const useGameStore = create(
                     selectedCategories: catArray,
                     currentWord: chosenWordObj.word,
                     currentCategory: chosenWordObj.category,
+                    chaosEvent,
                     startingPlayerId,
                     isTrollActive,
                     timeLimit: settings.timeLimit,

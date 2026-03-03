@@ -154,49 +154,59 @@ const ScreenVote = () => {
                 </div>
             )}
 
-            {/* Vote Progress Bar */}
-            <div className="px-4 mb-3">
-                <div className="flex items-center justify-between text-xs text-[var(--text-secondary)] mb-1.5">
-                    <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        Səs verənlər
-                    </span>
-                    <motion.span
-                        key={votedCount}
-                        initial={{ scale: 1.4 }}
-                        animate={{ scale: 1 }}
-                        className="font-black text-[var(--text-primary)]"
-                    >
-                        {votedCount} / {totalVoters}
-                    </motion.span>
+            {/* Vote Progress Bar (Only for Online Mode) / Consensus Text (Local Mode) */}
+            {mode === 'online' ? (
+                <div className="px-4 mb-3">
+                    <div className="flex items-center justify-between text-xs text-[var(--text-secondary)] mb-1.5">
+                        <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            Səs verənlər
+                        </span>
+                        <motion.span
+                            key={votedCount}
+                            initial={{ scale: 1.4 }}
+                            animate={{ scale: 1 }}
+                            className="font-black text-[var(--text-primary)]"
+                        >
+                            {votedCount} / {totalVoters}
+                        </motion.span>
+                    </div>
+                    <div className="w-full bg-[var(--bg-card)] rounded-full h-2 border border-[var(--border-color)]">
+                        <motion.div
+                            className="h-full bg-red-500 rounded-full"
+                            initial={{ width: 0 }}
+                            animate={{ width: totalVoters > 0 ? `${(votedCount / totalVoters) * 100}%` : '0%' }}
+                            transition={{ duration: 0.5, type: 'spring', stiffness: 100 }}
+                        />
+                    </div>
                 </div>
-                <div className="w-full bg-[var(--bg-card)] rounded-full h-2 border border-[var(--border-color)]">
-                    <motion.div
-                        className="h-full bg-red-500 rounded-full"
-                        initial={{ width: 0 }}
-                        animate={{ width: totalVoters > 0 ? `${(votedCount / totalVoters) * 100}%` : '0%' }}
-                        transition={{ duration: 0.5, type: 'spring', stiffness: 100 }}
-                    />
+            ) : (
+                <div className="px-4 mb-3 text-center">
+                    <p className="text-sm font-bold text-[var(--text-secondary)] bg-[var(--bg-card)] py-2 rounded-xl border border-[var(--border-color)] shadow-sm">
+                        Ortaq qərarla kimi çıxarırsınız?
+                    </p>
                 </div>
-            </div>
+            )}
 
-            {/* My vote status */}
-            <AnimatePresence>
-                {hasVoted && (
-                    <motion.div
-                        initial={{ opacity: 0, y: -10, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-                        className="mx-4 mb-3 px-4 py-2 bg-green-500/10 border border-green-500/30 rounded-xl flex items-center gap-2"
-                    >
-                        <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
-                        <p className="text-sm text-green-400 font-bold">
-                            {myVote === 'skip' ? 'Səs verməkdən imtina etdiniz' : 'Səsinizi verdiniz. Digərlərini gözləyin...'}
-                        </p>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {/* My vote status (Only for Online Mode) */}
+            {mode === 'online' && (
+                <AnimatePresence>
+                    {hasVoted && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.95 }}
+                            transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+                            className="mx-4 mb-3 px-4 py-2 bg-green-500/10 border border-green-500/30 rounded-xl flex items-center gap-2"
+                        >
+                            <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                            <p className="text-sm text-green-400 font-bold">
+                                {myVote === 'skip' ? 'Səs verməkdən imtina etdiniz' : 'Səsinizi verdiniz. Digərlərini gözləyin...'}
+                            </p>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            )}
 
             {/* Player Grid + SVG Arrows overlay */}
             <div className="flex-1 overflow-y-auto px-4 pb-4 relative" ref={containerRef}>
@@ -252,6 +262,7 @@ const ScreenVote = () => {
                         const iVotedForThis = myVote === player.id;
                         const votesForThis = voteCountFor(player.id);
                         const bDur = breathingDuration(votesForThis);
+                        const isDisabled = mode === 'online' ? (isSpectator || isMe || hasVoted) : false;
 
                         return (
                             <motion.button
@@ -264,15 +275,15 @@ const ScreenVote = () => {
                                     scale: 1,
                                 }}
                                 transition={{ delay: i * 0.06, type: 'spring', stiffness: 200 }}
-                                whileHover={!isSpectator && !isMe && !hasVoted ? { scale: 1.06, borderColor: '#ef4444' } : {}}
-                                whileTap={!isSpectator && !isMe && !hasVoted ? { scale: 0.94 } : {}}
-                                onClick={() => !isSpectator && !isMe && !hasVoted && handleVote(player.id)}
-                                disabled={isSpectator || isMe || hasVoted}
+                                whileHover={!isDisabled ? { scale: 1.06, borderColor: '#ef4444' } : {}}
+                                whileTap={!isDisabled ? { scale: 0.94 } : {}}
+                                onClick={() => !isDisabled && handleVote(player.id)}
+                                disabled={isDisabled}
                                 className={`
                                     relative p-4 rounded-xl border flex flex-col items-center gap-2 transition-all
-                                    ${isMe
+                                    ${mode === 'online' && isMe
                                         ? 'opacity-50 cursor-not-allowed border-[var(--border-color)] bg-[var(--bg-card)]'
-                                        : hasVoted
+                                        : mode === 'online' && hasVoted
                                             ? iVotedForThis
                                                 ? 'border-red-500 bg-red-500/10 cursor-default'
                                                 : 'border-[var(--border-color)] bg-[var(--bg-card)] cursor-default opacity-70'

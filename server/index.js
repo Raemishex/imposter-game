@@ -117,7 +117,7 @@ function advanceDiscussionTurn(roomCode, clue) {
 function checkWinCondition(room) {
     const alive = room.players.filter(p => p.isAlive);
     const aliveImposters = alive.filter(p => p.isImposter);
-    const aliveCrew = alive.filter(p => !p.isImposter); // jester dahil
+    const aliveCrew = alive.filter(p => !p.isImposter && p.role !== 'jester'); // jester dahil DEĞİL
 
     if (aliveImposters.length === 0) {
         return { over: true, winner: 'crew', reason: 'Bütün imposterlar tapıldı! Vətəndaşlar qazandı! 🎉' };
@@ -126,6 +126,157 @@ function checkWinCondition(room) {
         return { over: true, winner: 'imposter', reason: 'İmposterlar üstünlük qazandı! 😈' };
     }
     return { over: false };
+}
+
+function processVotesIfComplete(roomCode) {
+    const room = rooms[roomCode];
+    if (!room || room.gameState !== 'voting') return;
+
+    const alivePlayers = room.players.filter(p => p.isAlive);
+    const votedCount = Object.keys(room.votes).length;
+
+    // Send the vote update
+    io.to(roomCode).emit('vote_update', {
+        votes: room.votes,
+        votedCount,
+        totalVoters: alivePlayers.length
+    });
+
+    // Check if everyone has voted
+    if (votedCount >= alivePlayers.length && alivePlayers.length > 0) {
+        // Səs sayımı
+        const tally = {};
+        Object.values(room.votes).forEach(tid => {
+            if (tid !== null && tid !== -1) {
+                tally[tid] = (tally[tid] || 0) + 1;
+            }
+        });
+
+        // Ən çox səs alan oyunçunu tap
+        let maxVotes = 0;
+        let eliminatedId = null;
+        let isTie = false;
+
+        for (const [pid, count] of Object.entries(tally)) {
+            if (count > maxVotes) {
+                maxVotes = count;
+                eliminatedId = pid;
+                isTie = false;
+            } else if (count === maxVotes) {
+                isTie = true;
+            }
+        }
+
+        if (isTie || maxVotes === 0) {
+            // Bərabərlik və ya heç kim səs verməyib
+            room.votes = {};
+
+            const voteResultPayload = {
+                eliminatedName: 'Heç kim',
+                wasImposter: false,
+                isJester: false,
+                word: room.currentWord,
+                category: room.currentCategory,
+                imposters: room.players.filter(p => p.isImposter).map(p => p.name),
+                jester: room.players.find(p => p.role === 'jester')?.name || null,
+                players: room.players
+            };
+
+            io.to(roomCode).emit('vote_result', voteResultPayload);
+
+            room.gameState = 'next_round';
+            room.discussionOrder = room.players.filter(p => p.isAlive).map(p => p.id);
+
+            io.to(roomCode).emit('next_round', {
+                eliminatedName: 'Heç kim',
+                wasImposter: false,
+                players: room.players,
+                alivePlayers: room.players.filter(p => p.isAlive),
+                message: 'Səslər bərabərdir. Heç kim atılmadı!'
+            });
+            console.log(`[VOTE] ${roomCode}: Səslər bərabərdir və ya səs verilmədi. Oyun davam edir.`);
+            return;
+        }
+
+        const eliminated = room.players.find(p => p.id === eliminatedId);
+        const wasImposter = eliminated?.isImposter || false;
+        const isJester = eliminated?.role === 'jester';
+
+        // Oyunçunu öldür
+        if (eliminated) eliminated.isAlive = false;
+
+        // Votes sıfırla
+        room.votes = {};
+
+        // vote_result: kim atıldı
+        const voteResultPayload = {
+            eliminatedName: eliminated?.name || 'Naməlum',
+            wasImposter,
+            isJester,
+            word: room.currentWord,
+            category: room.currentCategory,
+            imposters: room.players.filter(p => p.isImposter).map(p => p.name),
+            jester: room.players.find(p => p.role === 'jester')?.name || null,
+            players: room.players
+        };
+
+        io.to(roomCode).emit('vote_result', voteResultPayload);
+
+        // ── Win Condition Yoxlaması ───────────────────────────────────────
+        if (isJester) {
+            // Jester atılıb → Jester qazanır
+            const result = {
+                ...voteResultPayload,
+                winner: 'jester',
+                reason: `${eliminated?.name} Jester idi! Jester qazandı! 🎠`
+            };
+            room.gameState = 'result';
+            io.to(roomCode).emit('game_over', result);
+            console.log(`[VOTE] ${roomCode}: Jester wins. Eliminated: ${eliminated?.name}`);
+
+        } else {
+            const winCheck = checkWinCondition(room);
+
+            if (winCheck.over) {
+                // Oyun bitir
+                const result = {
+                    ...voteResultPayload,
+                    winner: winCheck.winner,
+                    reason: wasImposter
+                        ? (winCheck.winner === 'crew'
+                            ? `${eliminated?.name} imposter idi! Vətəndaşlar qazandı! 🎉`
+                            : winCheck.reason)
+                        : (winCheck.winner === 'imposter'
+                            ? `${eliminated?.name} vətəndaş idi! İmposterlar üstünlük qazandı! 😈`
+                            : winCheck.reason)
+                };
+                room.gameState = 'result';
+                io.to(roomCode).emit('game_over', result);
+                console.log(`[VOTE] ${roomCode}: ${winCheck.winner} wins. Eliminated: ${eliminated?.name}`);
+
+            } else {
+                // Oyun davam edir → next_round
+                room.gameState = 'next_round';
+
+                // Yeni discussion order: yalnız alive oyunçular
+                room.discussionOrder = room.players
+                    .filter(p => p.isAlive)
+                    .map(p => p.id);
+
+                io.to(roomCode).emit('next_round', {
+                    eliminatedName: eliminated?.name || 'Naməlum',
+                    wasImposter,
+                    players: room.players,
+                    alivePlayers: room.players.filter(p => p.isAlive),
+                    message: wasImposter
+                        ? `${eliminated?.name} imposter idi! Oyun davam edir...`
+                        : `${eliminated?.name} vətəndaş idi! Oyun davam edir...`
+                });
+
+                console.log(`[VOTE] ${roomCode}: Round continues. Eliminated: ${eliminated?.name} (${wasImposter ? 'imposter' : 'crew'})`);
+            }
+        }
+    }
 }
 
 // ─── Socket Handlers ──────────────────────────────────────────────────────────
@@ -511,110 +662,75 @@ io.on('connection', (socket) => {
 
         room.votes[socket.id] = targetId;
 
-        const alivePlayers = room.players.filter(p => p.isAlive);
-        const votedCount = Object.keys(room.votes).length;
+        processVotesIfComplete(roomCode);
+    });
 
-        io.to(roomCode).emit('vote_update', {
-            votes: room.votes,
-            votedCount,
-            totalVoters: alivePlayers.length
-        });
+    // ── Sheriff Shoot ────────────────────────────────────────────────────────
+    socket.on('sheriff_shoot', ({ roomCode, targetId }) => {
+        const room = rooms[roomCode];
+        if (!room) return;
 
-        // Hamı səs veribsə
-        if (votedCount >= alivePlayers.length) {
-            // Səs sayımı
-            const tally = {};
-            Object.values(room.votes).forEach(tid => {
-                if (tid !== null && tid !== -1) {
-                    tally[tid] = (tally[tid] || 0) + 1;
-                }
-            });
+        const sheriff = room.players.find(p => p.id === socket.id);
+        // Ensure sheriff has not already shot someone (only one shot allowed)
+        if (!sheriff || sheriff.role !== 'sheriff' || !sheriff.isAlive || sheriff.hasShot) return;
 
-            // Ən çox səs alan oyunçu
-            let maxVotes = 0;
-            let eliminatedId = null;
-            for (const [pid, count] of Object.entries(tally)) {
-                if (count > maxVotes) { maxVotes = count; eliminatedId = pid; }
-            }
+        const target = room.players.find(p => p.id === targetId);
+        if (!target || !target.isAlive) return;
 
-            const eliminated = room.players.find(p => p.id === eliminatedId);
-            const wasImposter = eliminated?.isImposter || false;
-            const isJester = eliminated?.role === 'jester';
+        sheriff.hasShot = true;
 
-            // Oyunçunu öldür
-            if (eliminated) eliminated.isAlive = false;
+        let eliminatedName = '';
+        let message = '';
+        let wasImposter = false;
 
-            // Votes sıfırla
-            room.votes = {};
+        if (target.isImposter) {
+            // Sheriff vurur imposter-i -> Imposter ölür
+            target.isAlive = false;
+            eliminatedName = target.name;
+            message = `Şerif düzgün vurdu! ${target.name} imposter idi.`;
+            wasImposter = true;
+        } else {
+            // Sheriff vurur vətəndaşı -> Sheriff özü ölür
+            sheriff.isAlive = false;
+            eliminatedName = sheriff.name;
+            message = `Şerif səhv adamı vurdu! Şerif ${sheriff.name} öldü.`;
+        }
 
-            // vote_result: kim atıldı
-            const voteResultPayload = {
-                eliminatedName: eliminated?.name || 'Naməlum',
-                wasImposter,
-                isJester,
-                word: room.currentWord,
-                category: room.currentCategory,
-                imposters: room.players.filter(p => p.isImposter).map(p => p.name),
-                jester: room.players.find(p => p.role === 'jester')?.name || null,
-                players: room.players
+        // Yeni discussion order: yalnız alive oyunçular
+        room.discussionOrder = room.players
+            .filter(p => p.isAlive)
+            .map(p => p.id);
+
+        const payload = {
+            eliminatedName,
+            wasImposter,
+            word: room.currentWord,
+            category: room.currentCategory,
+            imposters: room.players.filter(p => p.isImposter).map(p => p.name),
+            jester: room.players.find(p => p.role === 'jester')?.name || null,
+            sheriff: sheriff.name,
+            players: room.players
+        };
+
+        const winCheck = checkWinCondition(room);
+
+        if (winCheck.over) {
+            const result = {
+                ...payload,
+                winner: winCheck.winner,
+                reason: winCheck.reason
             };
-
-            io.to(roomCode).emit('vote_result', voteResultPayload);
-
-            // ── Win Condition Yoxlaması ───────────────────────────────────────
-            if (isJester) {
-                // Jester atılıb → Jester qazanır
-                const result = {
-                    ...voteResultPayload,
-                    winner: 'jester',
-                    reason: `${eliminated?.name} Jester idi! Jester qazandı! 🎠`
-                };
-                room.gameState = 'result';
-                io.to(roomCode).emit('game_over', result);
-                console.log(`[VOTE] ${roomCode}: Jester wins. Eliminated: ${eliminated?.name}`);
-
-            } else {
-                const winCheck = checkWinCondition(room);
-
-                if (winCheck.over) {
-                    // Oyun bitir
-                    const result = {
-                        ...voteResultPayload,
-                        winner: winCheck.winner,
-                        reason: wasImposter
-                            ? (winCheck.winner === 'crew'
-                                ? `${eliminated?.name} imposter idi! Vətəndaşlar qazandı! 🎉`
-                                : winCheck.reason)
-                            : (winCheck.winner === 'imposter'
-                                ? `${eliminated?.name} vətəndaş idi! İmposterlar üstünlük qazandı! 😈`
-                                : winCheck.reason)
-                    };
-                    room.gameState = 'result';
-                    io.to(roomCode).emit('game_over', result);
-                    console.log(`[VOTE] ${roomCode}: ${winCheck.winner} wins. Eliminated: ${eliminated?.name}`);
-
-                } else {
-                    // Oyun davam edir → next_round
-                    room.gameState = 'next_round';
-
-                    // Yeni discussion order: yalnız alive oyunçular
-                    room.discussionOrder = room.players
-                        .filter(p => p.isAlive)
-                        .map(p => p.id);
-
-                    io.to(roomCode).emit('next_round', {
-                        eliminatedName: eliminated?.name || 'Naməlum',
-                        wasImposter,
-                        players: room.players,
-                        alivePlayers: room.players.filter(p => p.isAlive),
-                        message: wasImposter
-                            ? `${eliminated?.name} imposter idi! Oyun davam edir...`
-                            : `${eliminated?.name} vətəndaş idi! Oyun davam edir...`
-                    });
-
-                    console.log(`[VOTE] ${roomCode}: Round continues. Eliminated: ${eliminated?.name} (${wasImposter ? 'imposter' : 'crew'})`);
-                }
-            }
+            room.gameState = 'result';
+            io.to(roomCode).emit('game_over', result);
+            console.log(`[SHERIFF] ${roomCode}: ${winCheck.winner} wins. Shot result: ${message}`);
+        } else {
+            room.gameState = 'next_round';
+            io.to(roomCode).emit('next_round', {
+                ...payload,
+                alivePlayers: room.players.filter(p => p.isAlive),
+                message
+            });
+            console.log(`[SHERIFF] ${roomCode}: Round continues. Shot result: ${message}`);
         }
     });
 
@@ -748,17 +864,8 @@ io.on('connection', (socket) => {
                 });
 
                 // Əgər aktiv voting varsa, vote sayını yenidən yoxla
-                const alivePlayers = room.players.filter(p => p.isAlive && p.id !== socket.id);
-                const votedCount = Object.keys(room.votes).length;
-                if (room.gameState === 'voting' && votedCount >= alivePlayers.length && alivePlayers.length > 0) {
-                    // Bütün qalan oyunçular səs verib — bu socket ayrılandan sonra
-                    // vote tamamlandı sayılır amma oyunçu artıq yoxdur
-                    // yenidən vote_update emit et
-                    io.to(code).emit('vote_update', {
-                        votes: room.votes,
-                        votedCount,
-                        totalVoters: alivePlayers.length
-                    });
+                if (room.gameState === 'voting') {
+                    processVotesIfComplete(code);
                 }
             }
             break;
