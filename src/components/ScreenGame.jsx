@@ -1,15 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
-import useGameStore from '../store/useGameStore';
+import useGameStore, { toggleVoiceChat, setVoiceMuted } from '../store/useGameStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     EyeOff, AlertTriangle, CheckCircle, Fingerprint,
-    ArrowRight, User, LogOut, Users, Send, SkipForward, Clock, CheckSquare
+    ArrowRight, User, LogOut, Users, Send, SkipForward, Clock, CheckSquare, Mic, MicOff
 } from 'lucide-react';
 import { CATEGORIES } from '../data';
 import { UI_TEXTS } from '../translations';
 import Modal from './Modal';
 import Chat from './Chat';
 import { useSoundManager } from '../hooks/useSoundManager';
+import SheriffCanvasEffect from './SheriffCanvasEffect';
 
 
 const TURN_DURATION = 60;
@@ -35,7 +36,9 @@ const ScreenGame = () => {
         nextRoundInfo,
         // Phase 3: Admin Cheats
         spyWord,
-        adminPlayerIds
+        adminPlayerIds,
+        voiceEnabled,
+        peerStreams
     } = useGameStore();
 
     const t = UI_TEXTS[language] || UI_TEXTS['az'];
@@ -50,6 +53,22 @@ const ScreenGame = () => {
     const [localPhase, setLocalPhase] = useState('pass');
     const [exitModal, setExitModal] = useState(false);
     const [sheriffModal, setSheriffModal] = useState(false);
+    const [showSheriffCanvas, setShowSheriffCanvas] = useState(false);
+
+    // Voice Chat State
+    const [isMuted, setIsMuted] = useState(false);
+
+    // Update mute state when button clicked
+    const handleToggleMute = () => {
+        setIsMuted(!isMuted);
+        setVoiceMuted(!isMuted);
+    };
+
+    // Auto-mute depending on phase (mute if not discussion)
+    useEffect(() => {
+        const isDiscussion = gameState === 'discussion' || gameState === 'local_discussion';
+        setVoiceMuted(!isDiscussion || isMuted);
+    }, [gameState, isMuted]);
 
     // Play flip sound when card is revealed; mark hasSeenCard
     useEffect(() => {
@@ -168,11 +187,16 @@ const ScreenGame = () => {
     const handleSheriffShoot = (targetId) => {
         setSheriffModal(false);
         playSound('click');
-        if (mode === 'online') {
-            useGameStore.getState().sheriffShootOnline?.(targetId);
-        } else {
-            useGameStore.getState().sheriffShootLocal?.(targetId);
-        }
+
+        // Show Canvas animation before processing
+        setShowSheriffCanvas(true);
+        setTimeout(() => {
+            if (mode === 'online') {
+                useGameStore.getState().sheriffShootOnline?.(targetId);
+            } else {
+                useGameStore.getState().sheriffShootLocal?.(targetId);
+            }
+        }, 800); // 800ms delay to let the animation play out
     };
 
     // ─── Shared helpers ────────────────────────────────────────────────────────
@@ -223,12 +247,14 @@ const ScreenGame = () => {
                                     <p className="text-[var(--text-secondary)] text-lg font-bold">{t.tapToReveal}</p>
                                 </div>
                             )}
-                            <div className="w-full max-w-sm aspect-[3/4] relative cursor-pointer"
-                                style={{ perspective: '1000px' }}
-                                onTouchStart={() => setIsHolding(true)} onTouchEnd={() => setIsHolding(false)}
-                                onMouseDown={() => setIsHolding(true)} onMouseUp={() => setIsHolding(false)} onMouseLeave={() => setIsHolding(false)}
+                            <div className="w-full max-w-sm aspect-[3/4] relative cursor-pointer select-none touch-none"
+                                style={{ perspective: '1000px', WebkitUserSelect: 'none', userSelect: 'none' }}
+                                onPointerDown={(e) => { e.preventDefault(); setIsHolding(true); }}
+                                onPointerUp={() => setIsHolding(false)}
+                                onPointerLeave={() => setIsHolding(false)}
+                                onContextMenu={(e) => e.preventDefault()}
                             >
-                                <motion.div className="w-full h-full relative" style={{ transformStyle: 'preserve-3d' }} animate={{ rotateY: isHolding ? 180 : 0 }} transition={{ duration: 0.3 }}>
+                                <motion.div className="w-full h-full relative pointer-events-none" style={{ transformStyle: 'preserve-3d' }} animate={{ rotateY: isHolding ? 180 : 0 }} transition={{ duration: 0.3 }}>
                                     <div className="absolute inset-0 rounded-3xl bg-[var(--bg-card)] border-2 border-[var(--border-color)] flex items-center justify-center shadow-xl" style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
                                         <div className="text-6xl font-black text-[var(--text-primary)]/10">?</div>
                                     </div>
@@ -496,6 +522,7 @@ const ScreenGame = () => {
                 <ExitModal isOpen={exitModal} onClose={() => setExitModal(false)} t={t} mode={mode} currentPlayer={currentPlayer} returnToLobby={returnToLobby} leaveRoom={leaveRoom} />
                 <PlayerListModal isOpen={playerListModal} onClose={() => setPlayerListModal(false)} players={orderedPlayers} currentTurnIndex={turnData.turnIndex} />
                 <SheriffModal isOpen={sheriffModal} onClose={() => setSheriffModal(false)} players={players} onShoot={handleSheriffShoot} currentPlayer={currentPlayer} mode={mode} />
+                <SheriffCanvasEffect isVisible={showSheriffCanvas} onComplete={() => setShowSheriffCanvas(false)} />
                 <Chat />
             </div>
         );
@@ -657,10 +684,25 @@ const ScreenGame = () => {
             <button onClick={() => setExitModal(true)} className="absolute top-4 left-4 z-[60] p-2 bg-[var(--bg-card)] rounded-full border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-red-500 transition-colors shadow-sm">
                 <LogOut className="w-6 h-6" />
             </button>
-            <button onClick={() => setPlayerListModal(true)} className="absolute top-4 right-4 z-[60] flex items-center gap-2 bg-[var(--bg-card)] px-3 py-2 rounded-full border border-[var(--border-color)] shadow-sm">
-                <Users className="w-4 h-4 text-[var(--text-secondary)]" />
-                <span className="text-sm font-bold">{players.length}</span>
-            </button>
+            <div className="absolute top-4 right-4 z-[60] flex gap-2">
+                {mode === 'online' && (
+                    <button onClick={() => {
+                        if (!voiceEnabled) toggleVoiceChat();
+                        else handleToggleMute();
+                    }} className="flex items-center gap-2 bg-[var(--bg-card)] px-3 py-2 rounded-full border border-[var(--border-color)] shadow-sm">
+                        {!voiceEnabled ? <MicOff className="w-4 h-4 text-gray-400" /> : isMuted ? <MicOff className="w-4 h-4 text-red-500" /> : <Mic className="w-4 h-4 text-green-500" />}
+                    </button>
+                )}
+                <button onClick={() => setPlayerListModal(true)} className="flex items-center gap-2 bg-[var(--bg-card)] px-3 py-2 rounded-full border border-[var(--border-color)] shadow-sm">
+                    <Users className="w-4 h-4 text-[var(--text-secondary)]" />
+                    <span className="text-sm font-bold">{players.length}</span>
+                </button>
+            </div>
+
+            {/* Render audio elements for peers */}
+            {mode === 'online' && voiceEnabled && Object.entries(peerStreams).map(([id, stream]) => (
+                <audio key={id} autoPlay ref={el => { if (el && stream) el.srcObject = stream; }} />
+            ))}
 
             {mode === 'online' ? (
                 <>
@@ -670,16 +712,16 @@ const ScreenGame = () => {
                         <Fingerprint className="w-12 h-12 mx-auto text-[var(--accent-color)] animate-pulse mt-4" />
                     </motion.div>
 
-                    <div className="w-full max-w-sm aspect-[3/4] relative cursor-pointer"
-                        style={{ perspective: '1000px' }}
-                        onTouchStart={() => { setIsHolding(true); if (!hasSeenCard) setHasSeenCard(true); }}
-                        onTouchEnd={() => setIsHolding(false)}
-                        onMouseDown={() => { setIsHolding(true); if (!hasSeenCard) setHasSeenCard(true); }}
-                        onMouseUp={() => setIsHolding(false)} onMouseLeave={() => setIsHolding(false)}
+                    <div className="w-full max-w-sm aspect-[3/4] relative cursor-pointer select-none touch-none"
+                        style={{ perspective: '1000px', WebkitUserSelect: 'none', userSelect: 'none' }}
+                        onPointerDown={(e) => { e.preventDefault(); setIsHolding(true); if (!hasSeenCard) setHasSeenCard(true); }}
+                        onPointerUp={() => setIsHolding(false)}
+                        onPointerLeave={() => setIsHolding(false)}
+                        onContextMenu={(e) => e.preventDefault()}
                     >
                         {/* Card Flip 3D + Hold Shake */}
                         <motion.div
-                            className="w-full h-full relative"
+                            className="w-full h-full relative pointer-events-none"
                             style={{ transformStyle: 'preserve-3d' }}
                             animate={{
                                 rotateY: isHolding ? 180 : 0,
@@ -903,15 +945,20 @@ const ScreenGame = () => {
                         </p>
                         <h2 className="text-[var(--text-secondary)] uppercase text-sm font-bold mb-2">Mövzu</h2>
                         <div className="relative">
-                            <h1 className={`text-4xl font-black text-[var(--text-primary)] transition-all duration-300 ${isHolding ? 'blur-0' : 'blur-md select-none'}`}>
+                            <h1 className={`text-4xl font-black text-[var(--text-primary)] transition-all duration-300 select-none ${isHolding ? 'blur-0 opacity-100' : 'blur-md opacity-0'}`}>
                                 {isHolding ? (isImposter && !imposterHint ? '🚫' : categoryName) : '???'}
                             </h1>
-                            {isHolding && isImposter && !imposterHint && <p className="text-red-500 text-xs font-bold absolute -bottom-6 w-full text-center animate-bounce">Imposter mövzunu görə bilməz!</p>}
-                            {isHolding && chaosEvent === 'blind_round' && <p className="text-gray-500 text-xs font-bold absolute -bottom-6 w-full text-center animate-bounce">Kor Raund: Mövzu gizlidir!</p>}
-                            <div className="absolute inset-0 flex items-center justify-center cursor-pointer"
-                                onMouseDown={() => setIsHolding(true)} onMouseUp={() => setIsHolding(false)} onMouseLeave={() => setIsHolding(false)}
-                                onTouchStart={() => setIsHolding(true)} onTouchEnd={() => setIsHolding(false)}>
-                                {!isHolding && <EyeOff className="w-8 h-8 text-[var(--text-secondary)] opacity-50" />}
+                            {isHolding && isImposter && !imposterHint && <p className="text-red-500 text-xs font-bold absolute -bottom-6 w-full text-center animate-bounce pointer-events-none">Imposter mövzunu görə bilməz!</p>}
+                            {isHolding && chaosEvent === 'blind_round' && <p className="text-gray-500 text-xs font-bold absolute -bottom-6 w-full text-center animate-bounce pointer-events-none">Kor Raund: Mövzu gizlidir!</p>}
+
+                            <div className="absolute inset-0 flex items-center justify-center cursor-pointer select-none touch-none"
+                                style={{ WebkitUserSelect: 'none', userSelect: 'none' }}
+                                onPointerDown={(e) => { e.preventDefault(); setIsHolding(true); }}
+                                onPointerUp={() => setIsHolding(false)}
+                                onPointerLeave={() => setIsHolding(false)}
+                                onContextMenu={(e) => e.preventDefault()}
+                            >
+                                {!isHolding && <EyeOff className="w-8 h-8 text-[var(--text-secondary)] opacity-50 pointer-events-none" />}
                             </div>
                         </div>
                     </div>
@@ -937,6 +984,7 @@ const ScreenGame = () => {
             <ExitModal isOpen={exitModal} onClose={() => setExitModal(false)} t={t} mode={mode} currentPlayer={currentPlayer} returnToLobby={returnToLobby} leaveRoom={leaveRoom} />
             <PlayerListModal isOpen={playerListModal} onClose={() => setPlayerListModal(false)} players={players} currentTurnIndex={-1} />
             <SheriffModal isOpen={sheriffModal} onClose={() => setSheriffModal(false)} players={players} onShoot={handleSheriffShoot} currentPlayer={currentPlayer} mode={mode} />
+            <SheriffCanvasEffect isVisible={showSheriffCanvas} onComplete={() => setShowSheriffCanvas(false)} />
             <Chat />
         </div>
     );
@@ -965,12 +1013,22 @@ const ExitModal = ({ isOpen, onClose, t, mode, currentPlayer, returnToLobby, lea
 
 const PlayerListModal = ({ isOpen, onClose, players, currentTurnIndex }) => {
     const isSecretAdmin = useGameStore(s => s.isSecretAdmin);
+
+    const getFrameBorderColor = (frame) => {
+        switch(frame) {
+            case 'gold': return 'border-yellow-400';
+            case 'diamond': return 'border-cyan-400';
+            case 'ruby': return 'border-red-500';
+            default: return 'border-transparent';
+        }
+    };
+
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Oyunçular">
             <div className="grid grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1">
                 {players.map((p, i) => (
                     <div key={p.id} className={`flex items-center gap-2 p-2 rounded-lg border ${i === currentTurnIndex ? 'border-[var(--accent-color)] bg-[var(--accent-color)]/10' : 'border-[var(--border-color)] bg-[var(--bg-primary)]'}`}>
-                        <div className="w-8 h-8 rounded-full bg-[var(--accent-color)]/10 flex items-center justify-center text-[var(--accent-color)] font-bold text-sm">
+                        <div className={`w-8 h-8 rounded-full bg-[var(--accent-color)]/10 border-2 ${getFrameBorderColor(p.frame)} flex items-center justify-center text-[var(--accent-color)] font-bold text-sm`}>
                             {p.name.charAt(0).toUpperCase()}
                         </div>
                         <span className={`text-sm font-medium truncate ${

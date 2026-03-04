@@ -44,6 +44,16 @@ const ScreenLobby = () => {
     const [chaosMode, setChaosMode] = useState(false);
     const [showSocialModal, setShowSocialModal] = useState(false);
     const [historyModal, setHistoryModal] = useState(false);
+    const [profileModal, setProfileModal] = useState(false);
+
+    const { points, unlockedFrames, activeFrame, unlockFrame, setActiveFrame } = useGameStore();
+
+    const frameShop = [
+        { id: 'basic', name: 'Basic Frame', cost: 0, color: 'border-[var(--border-color)]', bg: 'bg-[var(--bg-primary)]' },
+        { id: 'gold', name: 'Gold Frame', cost: 500, color: 'border-yellow-400', bg: 'bg-yellow-400/10' },
+        { id: 'diamond', name: 'Diamond Frame', cost: 1500, color: 'border-cyan-400', bg: 'bg-cyan-400/10' },
+        { id: 'ruby', name: 'Ruby Frame', cost: 3000, color: 'border-red-500', bg: 'bg-red-500/10' }
+    ];
     // secret admin modal
     const [devModeClicks, setDevModeClicks] = useState(0);
     const devClickTimer = useRef(null);
@@ -301,6 +311,54 @@ const ScreenLobby = () => {
                 onClose={() => setHistoryModal(false)} 
             />
 
+            <Modal isOpen={profileModal} onClose={() => setProfileModal(false)} title="Profil & Avatar" type="info">
+                <div className="space-y-4 max-h-96 overflow-y-auto p-1">
+                    <div className="bg-yellow-400/20 border border-yellow-400/50 rounded-xl p-4 text-center">
+                        <Star className="w-8 h-8 text-yellow-500 mx-auto mb-2 animate-pulse" />
+                        <p className="text-2xl font-black text-yellow-600">{points} Xal</p>
+                        <p className="text-xs text-yellow-600/80 mt-1">Oyunları qazanaraq daha çox xal topla!</p>
+                    </div>
+
+                    <h3 className="font-bold text-lg text-[var(--text-primary)] mt-6 mb-3 border-b border-[var(--border-color)] pb-2">Çərçivə Mağazası</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                        {frameShop.map(frame => {
+                            const isUnlocked = unlockedFrames.includes(frame.id);
+                            const isActive = activeFrame === frame.id;
+                            return (
+                                <button
+                                    key={frame.id}
+                                    onClick={() => {
+                                        if (isUnlocked) setActiveFrame(frame.id);
+                                        else unlockFrame(frame.id, frame.cost);
+                                    }}
+                                    disabled={!isUnlocked && points < frame.cost}
+                                    className={`relative flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all duration-300 ${
+                                        isActive ? 'border-green-500 bg-green-500/10 shadow-[0_0_15px_rgba(34,197,94,0.3)] scale-105'
+                                        : isUnlocked ? 'border-[var(--border-color)] bg-[var(--bg-card)] hover:border-green-400 cursor-pointer'
+                                        : points >= frame.cost ? 'border-[var(--border-color)] bg-[var(--bg-card)] hover:border-yellow-400 cursor-pointer'
+                                        : 'border-[var(--border-color)] bg-[var(--bg-primary)] opacity-50 cursor-not-allowed'
+                                    }`}
+                                >
+                                    <div className={`w-16 h-16 rounded-full border-[3px] flex items-center justify-center mb-3 ${frame.color} ${frame.bg}`}>
+                                        <User className="w-8 h-8 text-[var(--text-secondary)]" />
+                                    </div>
+                                    <span className="text-sm font-bold text-[var(--text-primary)] mb-1">{frame.name}</span>
+                                    {isActive ? (
+                                        <span className="text-xs font-bold text-green-500 bg-green-500/20 px-2 py-1 rounded">Aktiv</span>
+                                    ) : isUnlocked ? (
+                                        <span className="text-xs font-bold text-[var(--text-secondary)] bg-[var(--border-color)] px-2 py-1 rounded">İstifadə et</span>
+                                    ) : (
+                                        <span className={`text-xs font-bold px-2 py-1 rounded flex items-center gap-1 ${points >= frame.cost ? 'text-yellow-600 bg-yellow-400/20' : 'text-red-500 bg-red-500/10'}`}>
+                                            <Star className="w-3 h-3" /> {frame.cost}
+                                        </span>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            </Modal>
+
             <AnimatePresence>
                 {/* Social Support Modal */}
                 {showSocialModal && (
@@ -531,6 +589,9 @@ const ScreenLobby = () => {
                     <h1 className="text-3xl font-black uppercase tracking-tighter text-[var(--text-primary)] leading-none select-none cursor-pointer">KİM?</h1>
                 </div>
                 <div className="flex gap-2">
+                     <button className="icon-btn flex items-center gap-1 bg-yellow-400/10 text-yellow-600 px-3 py-1 rounded-full font-bold border border-yellow-400/30 whitespace-nowrap" onClick={() => { playClick(); setProfileModal(true); }}>
+                         <Star className="w-4 h-4" /> {points}
+                     </button>
                      <button className="icon-btn" onClick={() => { playClick(); setHistoryModal(true); }}><Clock className="w-6 h-6" /></button>
                      <button className="icon-btn" onClick={() => { playClick(); setShowHelp(true); }}><HelpCircle className="w-6 h-6" /></button>
                      <button

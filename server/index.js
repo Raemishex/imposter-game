@@ -308,7 +308,8 @@ io.on('connection', (socket) => {
                 isHost: true,
                 isImposter: false,
                 isAlive: true,
-                votes: 0
+                votes: 0,
+                frame
             }],
             gameState: 'lobby',
             isPrivate: !!isPrivate,
@@ -508,11 +509,30 @@ io.on('connection', (socket) => {
                 if (imposterSet.has(i)) { p.isImposter = true; p.role = 'imposter'; }
             });
 
-            if (room.settings.includeJester && playerCount > imposterCount + 1) {
-                const crewIndices = indices.slice(imposterCount);
-                const jesterIdx = crewIndices[Math.floor(Math.random() * crewIndices.length)];
-                room.players[jesterIdx].role = 'jester';
-                room.players[jesterIdx].isImposter = false;
+            let specialRolesAssigned = 0;
+
+            if (room.settings.includeJester && playerCount > imposterCount + specialRolesAssigned + 1) {
+                const crewIndices = indices.slice(imposterCount + specialRolesAssigned);
+                if (crewIndices.length > 0) {
+                    const jesterIdx = crewIndices[Math.floor(Math.random() * crewIndices.length)];
+                    room.players[jesterIdx].role = 'jester';
+                    room.players[jesterIdx].isImposter = false;
+                    specialRolesAssigned++;
+                    // Remove assigned index to avoid overlap
+                    const indexToRemove = indices.indexOf(jesterIdx);
+                    if (indexToRemove > -1) indices.splice(indexToRemove, 1);
+                }
+            }
+
+            if (room.settings.includeSheriff && playerCount > imposterCount + specialRolesAssigned + 1) {
+                const crewIndices = indices.slice(imposterCount + specialRolesAssigned);
+                if (crewIndices.length > 0) {
+                    const sheriffIdx = crewIndices[Math.floor(Math.random() * crewIndices.length)];
+                    room.players[sheriffIdx].role = 'sheriff';
+                    room.players[sheriffIdx].isImposter = false;
+                    room.players[sheriffIdx].hasShot = false; // Initialize hasShot property
+                    specialRolesAssigned++;
+                }
             }
         }
 
@@ -574,6 +594,19 @@ io.on('connection', (socket) => {
 
         console.log(`[GAME] ${roomCode} round ${room.round} started. Word: ${room.currentWord}, Cat: ${room.currentCategory}`);
         broadcastGlobalRooms();
+    });
+
+    // ── WebRTC Signaling ──────────────────────────────────────────────────────
+    socket.on('webrtc_offer', ({ targetId, offer }) => {
+        io.to(targetId).emit('webrtc_offer', { offer, senderId: socket.id });
+    });
+
+    socket.on('webrtc_answer', ({ targetId, answer }) => {
+        io.to(targetId).emit('webrtc_answer', { answer, senderId: socket.id });
+    });
+
+    socket.on('webrtc_ice_candidate', ({ targetId, candidate }) => {
+        io.to(targetId).emit('webrtc_ice_candidate', { candidate, senderId: socket.id });
     });
 
     // ── Player Ready ─────────────────────────────────────────────────────────
