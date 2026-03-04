@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import useGameStore from '../store/useGameStore';
+import useGameStore, { toggleVoiceChat, setVoiceMuted } from '../store/useGameStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     EyeOff, AlertTriangle, CheckCircle, Fingerprint,
-    ArrowRight, User, LogOut, Users, Send, SkipForward, Clock, CheckSquare
+    ArrowRight, User, LogOut, Users, Send, SkipForward, Clock, CheckSquare, Mic, MicOff
 } from 'lucide-react';
 import { CATEGORIES } from '../data';
 import { UI_TEXTS } from '../translations';
@@ -36,7 +36,9 @@ const ScreenGame = () => {
         nextRoundInfo,
         // Phase 3: Admin Cheats
         spyWord,
-        adminPlayerIds
+        adminPlayerIds,
+        voiceEnabled,
+        peerStreams
     } = useGameStore();
 
     const t = UI_TEXTS[language] || UI_TEXTS['az'];
@@ -52,6 +54,21 @@ const ScreenGame = () => {
     const [exitModal, setExitModal] = useState(false);
     const [sheriffModal, setSheriffModal] = useState(false);
     const [showSheriffCanvas, setShowSheriffCanvas] = useState(false);
+
+    // Voice Chat State
+    const [isMuted, setIsMuted] = useState(false);
+
+    // Update mute state when button clicked
+    const handleToggleMute = () => {
+        setIsMuted(!isMuted);
+        setVoiceMuted(!isMuted);
+    };
+
+    // Auto-mute depending on phase (mute if not discussion)
+    useEffect(() => {
+        const isDiscussion = gameState === 'discussion' || gameState === 'local_discussion';
+        setVoiceMuted(!isDiscussion || isMuted);
+    }, [gameState, isMuted]);
 
     // Play flip sound when card is revealed; mark hasSeenCard
     useEffect(() => {
@@ -667,10 +684,25 @@ const ScreenGame = () => {
             <button onClick={() => setExitModal(true)} className="absolute top-4 left-4 z-[60] p-2 bg-[var(--bg-card)] rounded-full border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-red-500 transition-colors shadow-sm">
                 <LogOut className="w-6 h-6" />
             </button>
-            <button onClick={() => setPlayerListModal(true)} className="absolute top-4 right-4 z-[60] flex items-center gap-2 bg-[var(--bg-card)] px-3 py-2 rounded-full border border-[var(--border-color)] shadow-sm">
-                <Users className="w-4 h-4 text-[var(--text-secondary)]" />
-                <span className="text-sm font-bold">{players.length}</span>
-            </button>
+            <div className="absolute top-4 right-4 z-[60] flex gap-2">
+                {mode === 'online' && (
+                    <button onClick={() => {
+                        if (!voiceEnabled) toggleVoiceChat();
+                        else handleToggleMute();
+                    }} className="flex items-center gap-2 bg-[var(--bg-card)] px-3 py-2 rounded-full border border-[var(--border-color)] shadow-sm">
+                        {!voiceEnabled ? <MicOff className="w-4 h-4 text-gray-400" /> : isMuted ? <MicOff className="w-4 h-4 text-red-500" /> : <Mic className="w-4 h-4 text-green-500" />}
+                    </button>
+                )}
+                <button onClick={() => setPlayerListModal(true)} className="flex items-center gap-2 bg-[var(--bg-card)] px-3 py-2 rounded-full border border-[var(--border-color)] shadow-sm">
+                    <Users className="w-4 h-4 text-[var(--text-secondary)]" />
+                    <span className="text-sm font-bold">{players.length}</span>
+                </button>
+            </div>
+
+            {/* Render audio elements for peers */}
+            {mode === 'online' && voiceEnabled && Object.entries(peerStreams).map(([id, stream]) => (
+                <audio key={id} autoPlay ref={el => { if (el && stream) el.srcObject = stream; }} />
+            ))}
 
             {mode === 'online' ? (
                 <>
@@ -981,12 +1013,22 @@ const ExitModal = ({ isOpen, onClose, t, mode, currentPlayer, returnToLobby, lea
 
 const PlayerListModal = ({ isOpen, onClose, players, currentTurnIndex }) => {
     const isSecretAdmin = useGameStore(s => s.isSecretAdmin);
+
+    const getFrameBorderColor = (frame) => {
+        switch(frame) {
+            case 'gold': return 'border-yellow-400';
+            case 'diamond': return 'border-cyan-400';
+            case 'ruby': return 'border-red-500';
+            default: return 'border-transparent';
+        }
+    };
+
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Oyunçular">
             <div className="grid grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1">
                 {players.map((p, i) => (
                     <div key={p.id} className={`flex items-center gap-2 p-2 rounded-lg border ${i === currentTurnIndex ? 'border-[var(--accent-color)] bg-[var(--accent-color)]/10' : 'border-[var(--border-color)] bg-[var(--bg-primary)]'}`}>
-                        <div className="w-8 h-8 rounded-full bg-[var(--accent-color)]/10 flex items-center justify-center text-[var(--accent-color)] font-bold text-sm">
+                        <div className={`w-8 h-8 rounded-full bg-[var(--accent-color)]/10 border-2 ${getFrameBorderColor(p.frame)} flex items-center justify-center text-[var(--accent-color)] font-bold text-sm`}>
                             {p.name.charAt(0).toUpperCase()}
                         </div>
                         <span className={`text-sm font-medium truncate ${

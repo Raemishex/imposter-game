@@ -4,6 +4,8 @@ import { Trophy, Skull, RotateCcw, Home, Users, Star } from 'lucide-react';
 import { UI_TEXTS } from '../translations';
 import { useSoundManager } from '../hooks/useSoundManager';
 import Chat from './Chat';
+import ConfettiCanvas from './ConfettiCanvas';
+import GlitchCanvas from './GlitchCanvas';
 
 const ScreenResult = () => {
     const {
@@ -68,6 +70,8 @@ const ScreenResult = () => {
             transition={{ duration: 0.6 }}
             className={`min-h-screen flex flex-col items-center justify-center p-6 text-center relative overflow-hidden bg-gradient-to-b ${bgGradient}`}
         >
+            {isCrewWin && <ConfettiCanvas />}
+            {(!isCrewWin && !isJesterWin) && <GlitchCanvas />}
             {/* Animated background glow — pulsating */}
             <motion.div
                 animate={{

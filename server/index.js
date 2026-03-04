@@ -308,7 +308,8 @@ io.on('connection', (socket) => {
                 isHost: true,
                 isImposter: false,
                 isAlive: true,
-                votes: 0
+                votes: 0,
+                frame
             }],
             gameState: 'lobby',
             isPrivate: !!isPrivate,
@@ -593,6 +594,19 @@ io.on('connection', (socket) => {
 
         console.log(`[GAME] ${roomCode} round ${room.round} started. Word: ${room.currentWord}, Cat: ${room.currentCategory}`);
         broadcastGlobalRooms();
+    });
+
+    // ── WebRTC Signaling ──────────────────────────────────────────────────────
+    socket.on('webrtc_offer', ({ targetId, offer }) => {
+        io.to(targetId).emit('webrtc_offer', { offer, senderId: socket.id });
+    });
+
+    socket.on('webrtc_answer', ({ targetId, answer }) => {
+        io.to(targetId).emit('webrtc_answer', { answer, senderId: socket.id });
+    });
+
+    socket.on('webrtc_ice_candidate', ({ targetId, candidate }) => {
+        io.to(targetId).emit('webrtc_ice_candidate', { candidate, senderId: socket.id });
     });
 
     // ── Player Ready ─────────────────────────────────────────────────────────

@@ -306,7 +306,12 @@ const ScreenVote = () => {
                                         repeat: Infinity,
                                         ease: 'easeInOut'
                                     } : {}}
-                                    className="relative w-14 h-14 rounded-full bg-[var(--bg-primary)] border-2 border-[var(--border-color)] flex items-center justify-center overflow-hidden"
+                                    className={`relative w-14 h-14 rounded-full bg-[var(--bg-primary)] border-[3px] flex items-center justify-center overflow-hidden ${
+                                        player.frame === 'gold' ? 'border-yellow-400' :
+                                        player.frame === 'diamond' ? 'border-cyan-400' :
+                                        player.frame === 'ruby' ? 'border-red-500' :
+                                        'border-[var(--border-color)]'
+                                    }`}
                                 >
                                     {player.avatar
                                         ? <img src={player.avatar} alt={player.name} className="w-full h-full object-cover" />

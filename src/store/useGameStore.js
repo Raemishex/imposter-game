@@ -29,6 +29,8 @@ const useGameStore = create(
             socket,
             isConnected: false,
             roomCode: null,
+            voiceEnabled: false,
+            peerStreams: {},
             gameState: 'lobby',
             players: [],
             currentPlayer: null,
@@ -52,6 +54,9 @@ const useGameStore = create(
             language: 'az',
             theme: 'light',
             imposterSquad: false,
+            points: 0,
+            unlockedFrames: ['basic'],
+            activeFrame: 'basic',
 
             // Chat
             messages: [],
@@ -101,6 +106,18 @@ const useGameStore = create(
                 return { history: newHistory };
             }),
 
+            addPoints: (amount) => set(s => ({ points: s.points + amount })),
+            unlockFrame: (frameId, cost) => set(s => {
+                if (s.points >= cost && !s.unlockedFrames.includes(frameId)) {
+                    return { points: s.points - cost, unlockedFrames: [...s.unlockedFrames, frameId], activeFrame: frameId };
+                }
+                return s;
+            }),
+            setActiveFrame: (frameId) => set(s => {
+                if (s.unlockedFrames.includes(frameId)) return { activeFrame: frameId };
+                return s;
+            }),
+
             setError: (msg) => set({ error: msg }),
             setGameMode: (mode) => set({ mode }),
 
@@ -126,21 +143,23 @@ const useGameStore = create(
             // ── Room Actions ──────────────────────────────────────────────────
 
             createRoom: (playerName, isPrivate = false, roomName = '', region = 'Global') => {
+                const activeFrame = get().activeFrame;
                 if (get().mode === 'local') {
                     set({
                         gameState: 'lobby',
                         roomCode: 'LOCAL',
-                        players: [{ id: 'local-1', name: playerName, isHost: true, isAlive: true, votes: 0 }],
-                        currentPlayer: { id: 'local-1', name: playerName, isHost: true },
+                        players: [{ id: 'local-1', name: playerName, isHost: true, isAlive: true, votes: 0, frame: activeFrame }],
+                        currentPlayer: { id: 'local-1', name: playerName, isHost: true, frame: activeFrame },
                         mode: 'local'
                     });
                     return;
                 }
-                socket.emit('create_room', { playerName, isPrivate, roomName, region });
+                socket.emit('create_room', { playerName, isPrivate, roomName, region, frame: activeFrame });
             },
 
             joinRoom: (roomCode, playerName) => {
-                socket.emit('join_room', { roomCode, playerName });
+                const activeFrame = get().activeFrame;
+                socket.emit('join_room', { roomCode, playerName, frame: activeFrame });
             },
 
             leaveRoom: () => {
@@ -377,12 +396,14 @@ const useGameStore = create(
             // ── Local Mode ────────────────────────────────────────────────────
 
             addLocalPlayer: (name) => {
-                const { players } = get();
+                const { players, activeFrame } = get();
                 if (players.some(p => p.name.trim().toLowerCase() === name.trim().toLowerCase())) {
                     const t = UI_TEXTS[get().language] || UI_TEXTS['az'];
                     return { success: false, error: t.nameTaken };
                 }
-                set({ players: [...players, { id: `local-${Date.now()}`, name: name.trim(), isHost: false, isAlive: true, votes: 0 }] });
+                // DONT set frame here globally, since local players share a phone,
+                // but for simplicity we will just assign the active frame to the newly created local profile
+                set({ players: [...players, { id: `local-${Date.now()}`, name: name.trim(), isHost: false, isAlive: true, votes: 0, frame: activeFrame }] });
                 return { success: true };
             },
 
@@ -683,6 +704,17 @@ const useGameStore = create(
                             date: Date.now(),
                             reason: result.reason
                         });
+
+                        // Points logic (only calculate local points based on current player's role)
+                        const pRole = get().currentPlayer?.role || (get().isImposter ? 'imposter' : 'crew');
+                        if (result.winner === 'imposter' && pRole === 'imposter') {
+                            get().addPoints(100);
+                        } else if (result.winner === 'crew' && pRole === 'crew') {
+                            get().addPoints(50);
+                        } else if (result.winner === 'jester' && pRole === 'jester') {
+                            get().addPoints(150);
+                        }
+
                         set({ historyRecorded: true });
                     }
 
@@ -751,7 +783,10 @@ const useGameStore = create(
                 theme: state.theme,
                 language: state.language,
                 history: state.history,
-                imposterSquad: state.imposterSquad
+                imposterSquad: state.imposterSquad,
+                points: state.points,
+                unlockedFrames: state.unlockedFrames,
+                activeFrame: state.activeFrame
                 // isSecretAdmin persist EDİLMİR (security üçün)
             }),
         }
@@ -759,5 +794,37 @@ const useGameStore = create(
 );
 
 useGameStore.getState().initSockets();
+
+
+
+export const toggleVoiceChat = async () => {
+    const store = useGameStore.getState();
+    const { initWebRTC, startLocalStream, stopLocalStream, connectToPeers, toggleMute } = await import('./webrtc');
+
+    if (store.voiceEnabled) {
+        stopLocalStream();
+        useGameStore.setState({ voiceEnabled: false, peerStreams: {} });
+    } else {
+        const success = await startLocalStream();
+        if (success) {
+            initWebRTC(socket, (peerId, stream) => {
+                const updatedStreams = { ...useGameStore.getState().peerStreams, [peerId]: stream };
+                useGameStore.setState({ peerStreams: updatedStreams });
+            });
+            const peerIds = store.players.filter(p => p.id !== socket.id).map(p => p.id);
+            await connectToPeers(peerIds, (peerId, stream) => {
+                const updatedStreams = { ...useGameStore.getState().peerStreams, [peerId]: stream };
+                useGameStore.setState({ peerStreams: updatedStreams });
+            });
+            useGameStore.setState({ voiceEnabled: true });
+        }
+    }
+};
+
+export const setVoiceMuted = async (muted) => {
+    const { toggleMute } = await import('./webrtc');
+    toggleMute(muted);
+};
+
 
 export default useGameStore;
